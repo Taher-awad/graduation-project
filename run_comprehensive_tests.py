@@ -118,7 +118,7 @@ class CortexTester:
             resp = self.session.post(
                 f"{BASE_URL}/assets/upload",
                 files={"file": (dummy_file, f, "text/plain")},
-                data={"is_sliceable": "false"}
+                data={"is_sliceable": "false", "asset_type": "MODEL"}
             )
         os.remove(dummy_file)
         
@@ -147,7 +147,7 @@ class CortexTester:
                 resp = self.session.post(
                     f"{BASE_URL}/assets/upload",
                     files={"file": f},
-                    data={"is_sliceable": sliceable}
+                    data={"is_sliceable": sliceable, "asset_type": "MODEL"}
                 )
                 if resp.status_code == 200:
                     asset_id = resp.json()["id"]
@@ -208,8 +208,61 @@ class CortexTester:
             log("Timeout waiting for assets.", "fail")
 
 
+    # --- Room Tests (Phase 2.5) ---
+    def test_rooms(self):
+        log("Testing Rooms & Roles", "header")
+        
+        # 1. Create Room (Should Succeed as STAFF - seeded taher is staff?)
+        # Wait, self.user_id is random student. Need to login as STAFF first.
+        # Changing flow: Login as default staff 'taher' to create room.
+        
+        log("Logging in as STAFF (taher)...")
+        resp = self.session.post(f"{BASE_URL}/auth/login", json={"username": "taher", "password": "123"})
+        if resp.status_code != 200:
+            log("Failed to login as STAFF taher", "fail")
+            return False
+            
+        staff_token = resp.json()["access_token"]
+        self.session.headers.update({"Authorization": f"Bearer {staff_token}"})
+        
+        # Create Room
+        room_name = f"Test Room {uuid.uuid4().hex[:4]}"
+        resp = self.session.post(f"{BASE_URL}/rooms/", json={
+            "name": room_name,
+            "description": "Automated Test Room",
+            "is_online": True,
+            "max_participants": 10
+        })
+        
+        if resp.status_code == 201:
+            room_id = resp.json()["id"]
+            log(f"Created Room '{room_name}' (ID: {room_id})", "success")
+        else:
+            log(f"Failed to create room: {resp.text}", "fail")
+            return False
+            
+        # 2. Toggle Online Status
+        resp = self.session.put(f"{BASE_URL}/rooms/{room_id}/status?is_online=false")
+        if resp.status_code == 200 and resp.json()["is_online"] == False:
+            log("Online Status Toggled", "success")
+        else:
+            log("Failed to toggle status", "fail")
+            
+        # 3. List Rooms (Owner view)
+        resp = self.session.get(f"{BASE_URL}/rooms/")
+        rooms = resp.json()
+        if any(r["id"] == room_id for r in rooms):
+            log("Room found in Owner List", "success")
+        else:
+            log("Room NOT found in list", "fail")
+            
+        # Returning to random User (Student) to test Invites?
+        # For now, just verifying Room Creation and Listing is sufficient for backend check.
+        return True
+
 if __name__ == "__main__":
     tester = CortexTester()
     if tester.test_auth():
         tester.test_api()
+        tester.test_rooms() # New Test Phase
         tester.test_pipeline()

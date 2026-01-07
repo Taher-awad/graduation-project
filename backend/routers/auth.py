@@ -7,13 +7,8 @@ from auth_utils import get_password_hash, verify_password, create_access_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-class UserCreate(BaseModel):
-    username: str
-    password: str
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+from schemas import UserCreate, Token, UserResponse
+from models import UserRole
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(user: UserCreate, db: Session = Depends(get_db)):
@@ -22,7 +17,8 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already registered")
     
     hashed_password = get_password_hash(user.password)
-    new_user = User(username=user.username, password_hash=hashed_password)
+    # Role is now passed from Pydantic model
+    new_user = User(username=user.username, password_hash=hashed_password, role=user.role)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -38,5 +34,6 @@ def login(user: UserCreate, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token = create_access_token(data={"sub": db_user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+    # Store role in metadata or just token
+    access_token = create_access_token(data={"sub": db_user.username, "role": db_user.role.value})
+    return {"access_token": access_token, "token_type": "bearer", "role": db_user.role}

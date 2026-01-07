@@ -1,9 +1,23 @@
-from sqlalchemy import Column, String, Boolean, Enum, ForeignKey
+from sqlalchemy import Column, String, Boolean, Enum, ForeignKey, Integer, DateTime
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.orm import relationship
 import uuid
 import enum
 from database import Base
+import datetime
+
+class UserRole(str, enum.Enum):
+    STAFF = "STAFF"
+    STUDENT = "STUDENT"
+
+class AssetType(str, enum.Enum):
+    MODEL = "MODEL"
+    VIDEO = "VIDEO"
+    SLIDE = "SLIDE"
+
+class RoomMemberStatus(str, enum.Enum):
+    INVITED = "INVITED"
+    JOINED = "JOINED"
 
 class AssetStatus(str, enum.Enum):
     PENDING = "PENDING"
@@ -17,8 +31,37 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
+    role = Column(Enum(UserRole), default=UserRole.STUDENT, nullable=False)
     
     assets = relationship("Asset", back_populates="owner")
+    owned_rooms = relationship("Room", back_populates="owner")
+    room_memberships = relationship("RoomMember", back_populates="user")
+
+class Room(Base):
+    __tablename__ = "rooms"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    is_online = Column(Boolean, default=False)
+    max_participants = Column(Integer, default=20)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    owner = relationship("User", back_populates="owned_rooms")
+    members = relationship("RoomMember", back_populates="room")
+    # assets = relationship("RoomAsset", back_populates="room") # Future: Room Content
+
+class RoomMember(Base):
+    __tablename__ = "room_members"
+    
+    room_id = Column(UUID(as_uuid=True), ForeignKey("rooms.id"), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
+    status = Column(Enum(RoomMemberStatus), default=RoomMemberStatus.INVITED)
+    permissions = Column(JSON, default={"can_slice": True, "can_talk": False, "can_interact": True})
+    
+    room = relationship("Room", back_populates="members")
+    user = relationship("User", back_populates="room_memberships")
 
 class Asset(Base):
     __tablename__ = "assets"
@@ -27,7 +70,8 @@ class Asset(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     
     filename = Column(String, nullable=False)
-    is_sliceable = Column(Boolean, default=False)
+    asset_type = Column(Enum(AssetType), default=AssetType.MODEL)
+    is_sliceable = Column(Boolean, default=False) # Only relevant for MODEL
     status = Column(Enum(AssetStatus), default=AssetStatus.PENDING)
     
     original_path = Column(String, nullable=True) # S3 Key

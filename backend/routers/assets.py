@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import uuid
 import boto3
 from botocore.client import Config
 import os
 
 from database import get_db
-from models import Asset, User, AssetStatus
+from models import Asset, User, AssetStatus, AssetType
 from dependencies import get_current_user
+from schemas import AssetResponse
 
 from worker import process_asset
 
@@ -36,16 +37,26 @@ except:
 @router.post("/upload")
 async def upload_asset(
     file: UploadFile = File(...),
-    is_sliceable: bool = Form(...),
+    asset_type: AssetType = Form(...),
+    is_sliceable: bool = Form(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     asset_id = uuid.uuid4()
     file_ext = file.filename.split('.')[-1].lower()
     
-    ALLOWED_EXTENSIONS = {'glb', 'gltf', 'fbx', 'obj', 'blend', 'stl'}
-    if file_ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: {ALLOWED_EXTENSIONS}")
+    # Validation per type
+    if asset_type == AssetType.MODEL:
+        ALLOWED = {'glb', 'gltf', 'fbx', 'obj', 'blend', 'stl'}
+    elif asset_type == AssetType.VIDEO:
+        ALLOWED = {'mp4', 'mov', 'avi'}
+    elif asset_type == AssetType.SLIDE:
+        ALLOWED = {'pdf', 'pptx', 'png', 'jpg'}
+    else:
+        ALLOWED = set()
+
+    if file_ext not in ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Invalid file type for {asset_type.value}. Allowed: {ALLOWED}")
         
     s3_key = f"raw/{asset_id}.{file_ext}"
     
@@ -55,36 +66,52 @@ async def upload_asset(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"S3 Upload Failed: {str(e)}")
     
+    # Determine Initial Status
+    # Models need processing. Videos/Slides are done (or just stored).
+    initial_status = AssetStatus.PENDING if asset_type == AssetType.MODEL else AssetStatus.COMPLETED
+    processed_path = s3_key if asset_type != AssetType.MODEL else None # For non-models, raw IS the processed
+
     # Create DB Entry
     new_asset = Asset(
         id=asset_id,
         owner_id=current_user.id,
         filename=file.filename,
-        is_sliceable=is_sliceable,
+        asset_type=asset_type,
+        is_sliceable=is_sliceable if asset_type == AssetType.MODEL else False,
         original_path=s3_key,
-        status=AssetStatus.PENDING
+        processed_path=processed_path,
+        status=initial_status
     )
     db.add(new_asset)
     db.commit()
     db.refresh(new_asset)
     
-    # Trigger Celery Task
-    task = process_asset.delay(str(asset_id))
+    # Trigger Celery Task ONLY for Models
+    if asset_type == AssetType.MODEL:
+        task = process_asset.delay(str(asset_id))
     
-    return {"id": str(new_asset.id), "status": new_asset.status}
+    return {"id": str(new_asset.id), "status": new_asset.status, "type": new_asset.asset_type}
 
-@router.get("/", response_model=List[dict])
-def list_assets(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    assets = db.query(Asset).filter(Asset.owner_id == current_user.id).all()
-    return [{"id": str(a.id), "filename": a.filename, "status": a.status} for a in assets]
+@router.get("/", response_model=List[AssetResponse])
+def list_assets(
+    asset_type: Optional[AssetType] = None,
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    query = db.query(Asset).filter(Asset.owner_id == current_user.id)
+    if asset_type:
+        query = query.filter(Asset.asset_type == asset_type)
+        
+    assets = query.all()
+    return assets
 
-@router.get("/{asset_id}")
+@router.get("/{asset_id}", response_model=AssetResponse)
 def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.owner_id == current_user.id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     
-    # Generate Presigned URL for processed file if completed
+    # Generate Presigned URL
     download_url = None
     if asset.status == AssetStatus.COMPLETED and asset.processed_path:
         try:
@@ -94,12 +121,11 @@ def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db:
                                                     ExpiresIn=3600)
         except Exception as e:
             print(f"Error generating url: {e}")
-
-    return {
-        "id": str(asset.id),
-        "status": asset.status,
-        "filename": asset.filename,
-        "is_sliceable": asset.is_sliceable,
-        "download_url": download_url,
-        "metadata": asset.metadata_json
-    }
+            
+    # For Schema response, we attach the url manually (since it's not in DB)
+    # But Pydantic 'orm_mode' usually grabs DB fields. We need to construct response or use a helper.
+    # Actually, returning the ORM object works if the Pydantic model has matching fields.
+    # But 'download_url' is computed. We should set it on the object or return a dict.
+    
+    asset.download_url = download_url # Monkey-patch for Pydantic (works usually)
+    return asset
