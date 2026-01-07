@@ -41,7 +41,12 @@ async def upload_asset(
     db: Session = Depends(get_db)
 ):
     asset_id = uuid.uuid4()
-    file_ext = file.filename.split('.')[-1]
+    file_ext = file.filename.split('.')[-1].lower()
+    
+    ALLOWED_EXTENSIONS = {'glb', 'gltf', 'fbx', 'obj', 'blend', 'stl'}
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: {ALLOWED_EXTENSIONS}")
+        
     s3_key = f"raw/{asset_id}.{file_ext}"
     
     # Upload to MinIO

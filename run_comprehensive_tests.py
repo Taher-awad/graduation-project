@@ -111,6 +111,20 @@ class CortexTester:
         if resp.status_code == 404: log("404 Validation", "success")
         else: log("404 Check Failed", "fail")
         
+        # 3. Invalid File Upload
+        dummy_file = "test.txt"
+        with open(dummy_file, "w") as f: f.write("dummy")
+        with open(dummy_file, "rb") as f:
+            resp = self.session.post(
+                f"{BASE_URL}/assets/upload",
+                files={"file": (dummy_file, f, "text/plain")},
+                data={"is_sliceable": "false"}
+            )
+        os.remove(dummy_file)
+        
+        if resp.status_code == 400: log("Invalid File Rejected", "success")
+        else: log(f"Invalid File Allowed? Status: {resp.status_code}", "fail")
+        
         return True
 
     # --- Pipeline Tests ---
