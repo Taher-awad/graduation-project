@@ -1,5 +1,5 @@
-import React from 'react';
-import { Asset, AssetType, AssetStatus } from '../types';
+import { AssetType, AssetStatus } from '../types';
+import type { Asset } from '../types';
 import { Box, Play, FileText, Download, Clock, AlertTriangle, CheckCircle2, Eye } from 'lucide-react';
 import clsx from 'clsx';
 

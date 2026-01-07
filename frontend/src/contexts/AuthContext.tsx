@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, UserRole } from '../types';
-import api from '../api/client';
+import { UserRole } from '../types';
+import type { User } from '../types';
 import { jwtDecode } from "jwt-decode"; // You might need to install this: npm install jwt-decode
 
 interface AuthContextType {

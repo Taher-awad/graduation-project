@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Upload, X, File, Check } from 'lucide-react';
 import api from '../api/client';
 import { AssetType } from '../types';

@@ -1,20 +1,26 @@
-export enum UserRole {
-  STAFF = "STAFF",
-  STUDENT = "STUDENT"
-}
+export const UserRole = {
+  STAFF: "STAFF",
+  STUDENT: "STUDENT"
+} as const;
 
-export enum AssetType {
-  MODEL = "MODEL",
-  VIDEO = "VIDEO",
-  SLIDE = "SLIDE"
-}
+export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 
-export enum AssetStatus {
-  PENDING = "PENDING",
-  PROCESSING = "PROCESSING",
-  COMPLETED = "COMPLETED",
-  FAILED = "FAILED"
-}
+export const AssetType = {
+  MODEL: "MODEL",
+  VIDEO: "VIDEO",
+  SLIDE: "SLIDE"
+} as const;
+
+export type AssetType = (typeof AssetType)[keyof typeof AssetType];
+
+export const AssetStatus = {
+  PENDING: "PENDING",
+  PROCESSING: "PROCESSING",
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED"
+} as const;
+
+export type AssetStatus = (typeof AssetStatus)[keyof typeof AssetStatus];
 
 export interface User {
   username: string;

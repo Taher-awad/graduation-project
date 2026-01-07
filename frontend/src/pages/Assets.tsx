@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../api/client';
-import { Asset } from '../types';
+import type { Asset } from '../types';
 import { AssetCard } from '../components/AssetCard';
 import { UploadModal } from '../components/UploadModal';
 import { ViewerModal } from '../components/ViewerModal';

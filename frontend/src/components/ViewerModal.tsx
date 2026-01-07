@@ -1,7 +1,6 @@
-import React from 'react';
 import { X, ExternalLink } from 'lucide-react';
 import { ModelViewer } from './ModelViewer';
-import { Asset } from '../types';
+import type { Asset } from '../types';
 
 interface ViewerModalProps {
   asset: Asset | null;
