@@ -76,7 +76,7 @@ def normalize_model(is_sliceable, asset_id):
         active_obj.location = (0, 0, 0)
     else:
         # Bottom Center: Move object so its bottom (min Z in Blender) is at Z=0
-        min_z_new = min([ (active_obj.matrix_world @ v)[2] for v in active_obj.bound_box ])
+        min_z_new = min([ (active_obj.matrix_world @ mathutils.Vector(v))[2] for v in active_obj.bound_box ])
         active_obj.location.z -= min_z_new
 
     # Metadata Injection
