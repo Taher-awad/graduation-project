@@ -74,12 +74,21 @@ export const UploadModal = ({ isOpen, onClose }: UploadModalProps) => {
               file ? "border-indigo-500/50 bg-indigo-500/5" : "border-slate-700 hover:border-slate-500 hover:bg-slate-800/50"
             }`}
           >
-            <input 
-              type="file" 
-              ref={fileInputRef}
-              className="hidden" 
-              onChange={handleFileChange}
-            />
+              <input 
+                type="file" 
+                accept={
+                  type === AssetType.MODEL
+                    ? ".glb,.gltf,.fbx,.obj,.stl,.blend,.zip"
+                    : type === AssetType.VIDEO
+                    ? ".mp4,.webm"
+                    : type === AssetType.IMAGE
+                    ? ".png,.jpg,.jpeg,.webp"
+                    : ".pdf"
+                }
+                ref={fileInputRef}
+                className="hidden" 
+                onChange={handleFileChange}
+              />
             
             {file ? (
               <div className="text-center">
@@ -95,7 +104,7 @@ export const UploadModal = ({ isOpen, onClose }: UploadModalProps) => {
                   <Upload size={24} />
                 </div>
                 <p className="font-medium text-slate-200">Click to browse</p>
-                <p className="text-sm text-slate-500">Supports GLB, FBX, OBJ, BLEND, MP4, PDF, PNG, JPG</p>
+                <p className="text-sm text-slate-500">Supports GLB, FBX, OBJ, BLEND, ZIP, MP4, PDF, PNG</p>
               </div>
             )}
           </div>

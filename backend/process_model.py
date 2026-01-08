@@ -170,6 +170,60 @@ def normalize_model(is_sliceable, asset_id):
     except:
         pass
 
+def validate_model():
+    """
+    Performs extensive checks on the scene data.
+    Raises SystemExit(1) if Critical Errors are found.
+    """
+    import json
+    import math
+    
+    errors = []
+    
+    print("--- DEBUG: RUNNING VALIDATION ---")
+    
+    # 1. Texture Check
+    # We check if referenced images actually exist on disk (unless packed)
+    for img in bpy.data.images:
+        # Skip Render Results or generated images
+        if img.source != 'FILE': 
+            continue
+            
+        if img.filepath and not img.packed_file:
+            path = bpy.path.abspath(img.filepath)
+            if not os.path.exists(path):
+                # Try to be smart: Check invalid paths too
+                errors.append(f"Missing Texture: '{img.name}' (Path not found: {img.filepath})")
+
+    # 2. Geometry Check
+    total_verts = 0
+    start_checking = True
+    
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH':
+            mesh = obj.data
+            total_verts += len(mesh.vertices)
+            
+            # NaN/Inf Check (Critical for WebGL)
+            # Sample first 50 vertices for performance
+            if start_checking and len(mesh.vertices) > 0:
+                for i, v in enumerate(mesh.vertices):
+                    if i > 50: break
+                    if any(math.isnan(c) or math.isinf(c) for c in v.co):
+                        errors.append(f"Corrupt Geometry (NaN/Inf values) in object '{obj.name}'")
+                        start_checking = False # Stop checking to avoid flooding
+                        break
+
+    if total_verts == 0:
+        errors.append("Model contains no geometry (0 Vertices).")
+        
+    if errors:
+        print("VALIDATION_FAILED")
+        print(json.dumps(errors))
+        sys.exit(1)
+    else:
+        print("--- DEBUG: VALIDATION PASSED ---")
+
 def export_model(output_path):
     print("--- DEBUG: EXPORTING (VANILLA) ---")
     # Ensure export_extras is True
@@ -215,6 +269,7 @@ if __name__ == "__main__":
         reset_scene()
         import_model(parsed_args.input)
         normalize_model(is_sliceable, parsed_args.id)
+        validate_model()
         export_model(parsed_args.output)
         print("Blender Processing Complete.")
 

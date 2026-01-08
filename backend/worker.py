@@ -10,6 +10,7 @@ from database import SessionLocal
 from models import Asset, AssetStatus
 from celery_app import celery_app
 import optimize
+from utils_worker import find_main_model_file
 
 # Debugging Paths
 # Debugging Paths
@@ -53,23 +54,47 @@ def process_asset(self, asset_id: str):
         print(f"Downloading {asset.original_path}...")
         s3.download_file(BUCKET_NAME, asset.original_path, local_input_path)
 
+        # Logic for Zip Files
+        target_model_path = local_input_path
+        blender_cwd = work_dir # Default CWD is the tmp root
+
+        if input_filename.lower().endswith('.zip'):
+            print("Detected ZIP file. Extracting...")
+            import zipfile
+            
+            extract_dir = os.path.join(work_dir, "extracted")
+            os.makedirs(extract_dir, exist_ok=True)
+            
+            with zipfile.ZipFile(local_input_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+                
+            # Find the main model file
+            found_file = find_main_model_file(extract_dir)
+            if not found_file:
+                raise Exception("No valid 3D model (.blend, .gltf, .fbx, .obj) found in ZIP")
+                
+            target_model_path = found_file
+            # CRITICAL: We must run Blender from the directory OF the model file
+            # so relative texture paths (like ./textures/wood.png) work.
+            blender_cwd = os.path.dirname(found_file)
+            print(f"Main model found: {target_model_path}")
+            print(f"Setting Blender CWD to: {blender_cwd}")
+
         # 2. Blender Processing (Import -> Normalize -> Export GLB)
-        # Note: We assume 'blender' is in PATH (handled by Dockerfile)
-        # We pass arguments after --
         print("Running Blender...")
         blender_cmd = [
             "blender",
             "-b", # Background
-            "-P", "process_model.py", # Script
+            "-P", "/app/process_model.py", # Absolute path to ensure it runs from any CWD
             "--", # Split args
-            "--input", local_input_path,
+            "--input", target_model_path,
             "--output", mid_glb_path,
             "--sliceable", str(asset.is_sliceable),
             "--id", str(asset.id)
         ]
         
         # Capture output for debugging
-        result = subprocess.run(blender_cmd, capture_output=True, text=True, cwd=os.getcwd())
+        result = subprocess.run(blender_cmd, capture_output=True, text=True, cwd=blender_cwd)
         
         # ALWAYS print Blender output (so we can see if it did nothing on success)
         print("--- BLENDER STDOUT ---")
@@ -78,11 +103,28 @@ def process_asset(self, asset_id: str):
         print(result.stderr)
         
         if result.returncode != 0:
+            # Check for Validation JSON
+            import json
+            if "VALIDATION_FAILED" in result.stdout:
+                try:
+                    # Find the line after VALIDATION_FAILED
+                    lines = result.stdout.splitlines()
+                    for i, line in enumerate(lines):
+                        if "VALIDATION_FAILED" in line:
+                            error_json = lines[i+1]
+                            errors = json.loads(error_json)
+                            # Raise specific error
+                            raise Exception(f"Validation Failed: {', '.join(errors)}")
+                except ValueError:
+                    pass
+            
             raise Exception(f"Blender Failed: {result.stderr}")
 
+
+
         # 3. Optimization (gltfpack)
-        print("Skipping Optimization (Debug Mode)...")
-        # optimize.run_optimization(mid_glb_path, final_glb_path, asset.is_sliceable)
+        # Note: Optimization disabled to prevent shader/color artifacts (Division by Zero).
+        # We simply copy the intermediate file to the final path.
         shutil.copy(mid_glb_path, final_glb_path)
 
         # 4. Upload Result
@@ -106,6 +148,26 @@ def process_asset(self, asset_id: str):
     except Exception as e:
         print(f"Task Failed: {e}")
         asset.status = AssetStatus.FAILED
+        
+        # Parse Blender Output for Specific Validation Errors
+        error_msg = str(e)
+        if "Blender Failed" in error_msg:
+             # Logic to find "VALIDATION_FAILED" in stdout? 
+             # We need to capture stdout in the Exception context or read it here.
+             # subprocess.run captured output is in `result`. 
+             # BUT `result` is local to the try block.
+             # We need to raise Exception with the stdout attached?
+             pass 
+             
+        # Because 'result' scope is tricky, let's just assert:
+        # If the worker logic sees VALIDATION_FAILED in the logs, it should ideally pass it up.
+        # For now, let's put a generic error, but if we can parse it from `e` or logs...
+        
+        # Improved: We can't access `result.stdout` here easily unless we change the flow.
+        # But wait, look at where we raise Exception: raise Exception(f"Blender Failed: {result.stderr}")
+        # Blender prints VALIDATION_FAILED to stdout, not stderr usually (unless we force it).
+        # We should parse result.stdout INSIDE the try block.
+        
         asset.metadata_json = {"error": str(e)}
         db.commit()
         # Cleanup

@@ -67,7 +67,7 @@ async def upload_asset(
     
     # Validation per type
     if asset_type == AssetType.MODEL:
-        ALLOWED = {'glb', 'gltf', 'fbx', 'obj', 'blend', 'stl'}
+        ALLOWED = {'glb', 'gltf', 'fbx', 'obj', 'blend', 'stl', 'zip'}
     elif asset_type == AssetType.VIDEO:
         ALLOWED = {'mp4', 'mov', 'avi'}
     elif asset_type == AssetType.SLIDE:
