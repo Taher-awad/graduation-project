@@ -13,9 +13,7 @@ import optimize
 from utils_worker import find_main_model_file
 
 # Debugging Paths
-# Debugging Paths
 import sys
-
 
 # MinIO Setup
 s3 = boto3.client('s3',
@@ -70,8 +68,37 @@ def process_asset(self, asset_id: str):
                 
             # Find the main model file
             found_file = find_main_model_file(extract_dir)
+            
+            # --- START NESTED ZIP HANDLING ---
+            # If no model found, look for inner zips (e.g. source/model.zip)
             if not found_file:
-                raise Exception("No valid 3D model (.blend, .gltf, .fbx, .obj) found in ZIP")
+                print("No model found in root. Checking for nested ZIPs...")
+                inner_zips = []
+                for root, dirs, files in os.walk(extract_dir):
+                    for f in files:
+                        if f.lower().endswith('.zip'):
+                            inner_zips.append(os.path.join(root, f))
+                
+                if inner_zips:
+                    # Sort by size to pick "main" inner zip? Or just process all?
+                    # Generally just picking the largest one is a safe bet for the "Model Archive"
+                    largest_zip = max(inner_zips, key=os.path.getsize)
+                    print(f"Found inner ZIP: {largest_zip}. Extracting...")
+                    try:
+                        with zipfile.ZipFile(largest_zip, 'r') as z_inner:
+                            # Extract into the SAME directory where the zip lived
+                            # This usually keeps "textures" relative logic intact
+                            extract_inner_path = os.path.dirname(largest_zip)
+                            z_inner.extractall(extract_inner_path)
+                        
+                        # Search again
+                        found_file = find_main_model_file(extract_dir)
+                    except Exception as e:
+                        print(f"Failed to extract inner zip: {e}")
+            # --- END NESTED ZIP HANDLING ---
+            
+            if not found_file:
+                raise Exception("No valid 3D model (.blend, .gltf, .fbx, .obj) found in ZIP (even after checking nested archives)")
                 
             target_model_path = found_file
             # CRITICAL: We must run Blender from the directory OF the model file
@@ -104,7 +131,6 @@ def process_asset(self, asset_id: str):
         
         if result.returncode != 0:
             # Check for Validation JSON
-            import json
             if "VALIDATION_FAILED" in result.stdout:
                 try:
                     # Find the line after VALIDATION_FAILED
@@ -120,11 +146,8 @@ def process_asset(self, asset_id: str):
             
             raise Exception(f"Blender Failed: {result.stderr}")
 
-
-
         # 3. Optimization (gltfpack)
-        # Note: Optimization disabled to prevent shader/color artifacts (Division by Zero).
-        # We simply copy the intermediate file to the final path.
+        # Note: Optimization disabled
         shutil.copy(mid_glb_path, final_glb_path)
 
         # 4. Upload Result
@@ -148,26 +171,6 @@ def process_asset(self, asset_id: str):
     except Exception as e:
         print(f"Task Failed: {e}")
         asset.status = AssetStatus.FAILED
-        
-        # Parse Blender Output for Specific Validation Errors
-        error_msg = str(e)
-        if "Blender Failed" in error_msg:
-             # Logic to find "VALIDATION_FAILED" in stdout? 
-             # We need to capture stdout in the Exception context or read it here.
-             # subprocess.run captured output is in `result`. 
-             # BUT `result` is local to the try block.
-             # We need to raise Exception with the stdout attached?
-             pass 
-             
-        # Because 'result' scope is tricky, let's just assert:
-        # If the worker logic sees VALIDATION_FAILED in the logs, it should ideally pass it up.
-        # For now, let's put a generic error, but if we can parse it from `e` or logs...
-        
-        # Improved: We can't access `result.stdout` here easily unless we change the flow.
-        # But wait, look at where we raise Exception: raise Exception(f"Blender Failed: {result.stderr}")
-        # Blender prints VALIDATION_FAILED to stdout, not stderr usually (unless we force it).
-        # We should parse result.stdout INSIDE the try block.
-        
         asset.metadata_json = {"error": str(e)}
         db.commit()
         # Cleanup

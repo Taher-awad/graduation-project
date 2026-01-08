@@ -91,11 +91,16 @@ def normalize_model(is_sliceable, asset_id):
     root_obj = bpy.context.active_object
     root_obj.name = "ASSET_ROOT"
     
-    # Parent all meshes to Root
-    for obj in mesh_objects:
-        # Keep transform ensures they stay in visual place relative to new parent
-        # But we want to move them logically.
-        # Standard parenting:
+    # Parent EXISTING ROOTS to ASSET_ROOT
+    # This preserves internal hierarchies (e.g. Gun Body -> Trigger)
+    # instead of flattening them which causes "spaghetti" explosion.
+    
+    # Find all objects that don't have a parent (excluding our new root)
+    # We scan all scene objects, not just meshes, to catch Armatures/Empties.
+    scene_objects = bpy.context.scene.objects
+    existing_roots = [obj for obj in scene_objects if obj.parent is None and obj != root_obj]
+    
+    for obj in existing_roots:
         obj.parent = root_obj
         obj.matrix_parent_inverse = root_obj.matrix_world.inverted()
 
@@ -121,27 +126,7 @@ def normalize_model(is_sliceable, asset_id):
     # Actually simpler: Move Root to the NEGATIVE of the center.
     
     if is_sliceable:
-        # Move root to compensate for center
-        # We need to consider that scaling happens AFTER translation if we edit location directly?
-        # No, transform order is Loc -> Rot -> Scale.
-        # But here we are setting properties.
-        # Let's just adjust the root location?
-        # If we move root to -center, the attached children move with it.
-        # However, the children data is still at world coordinates.
-        # To make "Applied" visual transform correct:
-        
-        # Strategy: Move Root so that visual center aligns with world 0,0,0
-        # The visual center of the group is at (center_x, center_y, center_z).
-        # We want that point to be at (0,0,0).
-        # Translation vector = (0,0,0) - (center_x, center_y, center_z) * scale_factor?
-        # No, simpler to just inverse parent everything, move objects, then scale?
-        
-        # Let's try the simple Empty move.
-        # If I have a box at (10, 10, 10). I parent to Root (0,0,0). 
-        # I move Root to (-10, -10, -10). Box is now at (0,0,0).
-        
         root_obj.location = (-center_x * scale_factor, -center_y * scale_factor, -center_z * scale_factor)
-        
     else:
         # Bottom Center
         # min_z is the bottom.
@@ -159,16 +144,297 @@ def normalize_model(is_sliceable, asset_id):
         root_obj[k] = v
         
     # Apply to all children (Meshes)
-    # Apply to all children (Meshes)
     for obj in mesh_objects:
         for k, v in meta_props.items():
             obj[k] = v
 
-    # Ensure textures are available (Standard Blender behavior)
+    # Ensure textures are available
     try:
         bpy.ops.file.unpack_all(method='USE_LOCAL')
     except:
         pass
+        
+    # --- SMART TEXTURE RELINKING ---
+    relink_textures()
+    
+    # --- AUTO-CONNECT (Disk Search) ---
+    auto_connect_textures()
+    
+    # --- TRANSPARENCY FIX ---
+    fix_transparency()
+
+def relink_textures():
+    """
+    Attempts to find missing textures by scanning the directory tree
+    relative to the blend file/CWD.
+    """
+    import os
+    
+    print("--- DEBUG: RELINKING TEXTURES ---")
+    
+    # Gather missing images
+    missing_images = []
+    for img in bpy.data.images:
+        if img.source == 'FILE' and img.filepath:
+            path = bpy.path.abspath(img.filepath)
+            if not os.path.exists(path):
+                missing_images.append(img)
+    
+    if not missing_images:
+        return
+
+    # Scan the current working directory recursively
+    # We assume CWD is set to the model directory or root extract
+    # We walk UP one level to catch sibling folders like 'textures' if we are in 'source'
+    cwd = os.getcwd()
+    search_root = os.path.dirname(cwd) # Go up one level
+    
+    print(f"Scanning for missing textures in: {search_root}")
+    
+    found_files = {}
+    for root, dirs, files in os.walk(search_root):
+        for f in files:
+            found_files[f] = os.path.join(root, f)
+            
+    # Relink
+    for img in missing_images:
+        fname = os.path.basename(img.filepath)
+        if fname in found_files:
+            new_path = found_files[fname]
+            print(f"Relinking {img.name}: {img.filepath} -> {new_path}")
+            img.filepath = new_path
+
+def auto_connect_textures():
+    """
+    Dynamic Texture Matching:
+    Scans all files and attempts to link them to materials based on 
+    token overlap (name similarity) and channel keywords.
+    Independent of specific asset names (e.g. works for 'Tree', 'Car', 'Gun').
+    """
+    print("--- DEBUG: RUNNING DYNAMIC AUTO-CONNECT ---")
+    import re
+    
+    # 1. Index all files
+    cwd = os.getcwd()
+    search_root = os.path.dirname(cwd)
+    
+    print(f"Indexing files in {search_root}...")
+    texture_candidates = []
+    
+    # Supported Extensions
+    exts = ('.png', '.jpg', '.jpeg', '.tga', '.tif', '.tiff', '.bmp', '.webp')
+    
+    for root, dirs, files in os.walk(search_root):
+        for f in files:
+            if f.lower().endswith(exts):
+                # Store full path and tokenized name
+                full_path = os.path.join(root, f)
+                # Split by underscore, dot, space, hyphen
+                tokens = set(re.split(r'[._\-\s]+', f.lower()))
+                texture_candidates.append({
+                    'path': full_path,
+                    'filename': f,
+                    'tokens': tokens
+                })
+                
+    if not texture_candidates:
+        print("No textures found on disk.")
+        return
+
+    # Helper to find best match
+    def find_best_match(mat_tokens, channel_keywords, banned_keywords=set()):
+        best_file = None
+        best_score = 0
+        
+        for cand in texture_candidates:
+            score = 0
+            cand_tokens = cand['tokens']
+            
+            # 0. Check Banned Keywords
+            # If the file contains any word that implies a DIFFERENT channel, skip it.
+            # e.g. If looking for Alpha, skip "color", "normal".
+            if any(b in cand_tokens for b in banned_keywords):
+                continue
+            
+            # 1. Name Match (Intersection of unique words)
+            common_tokens = mat_tokens.intersection(cand_tokens)
+            score += len(common_tokens) * 10
+            
+            # 2. Channel Match
+            has_channel = any(k in cand_tokens for k in channel_keywords)
+            if has_channel:
+                score += 5
+            
+            # Threshold
+            if score > best_score:
+                best_score = score
+                best_file = cand['path']
+        
+        if best_score >= 10:
+            return best_file
+        return None
+
+    # 2. Iterate Materials
+    for mat in bpy.data.materials:
+        if not mat.use_nodes:
+            mat.use_nodes = True
+            
+        bsdf = None
+        for node in mat.node_tree.nodes:
+            if node.type == 'BSDF_PRINCIPLED':
+                bsdf = node
+                break
+        
+        if not bsdf: continue
+        
+        # Tokenize Material Name
+        clean_name = mat.name.lower().replace('material', '').strip()
+        if not clean_name:
+            clean_name = mat.name.lower()
+            
+        mat_tokens = set(re.split(r'[._\-\s]+', clean_name))
+        mat_tokens = {t for t in mat_tokens if len(t) > 2}
+        
+        print(f"Material '{mat.name}' tokens: {mat_tokens}")
+        
+        # --- Base Color ---
+        if 'Base Color' in bsdf.inputs and not bsdf.inputs['Base Color'].is_linked:
+            color_keys = {'color', 'diffuse', 'albedo', 'basecolor', 'base_color'}
+            banned = {'normal', 'nrm', 'bump', 'roughness', 'rough', 'gloss', 'specular', 'ao', 'ambient', 'alpha', 'opacity', 'mask'}
+            match = find_best_match(mat_tokens, color_keys, banned)
+            if match:
+                print(f"  -> Matched Base Color: {os.path.basename(match)}")
+                try:
+                    img = bpy.data.images.load(match)
+                    tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
+                    tex.image = img
+                    tex.location = (-300, 300)
+                    mat.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
+                except:
+                    pass
+
+        # --- Alpha ---
+        if 'Alpha' in bsdf.inputs and not bsdf.inputs['Alpha'].is_linked:
+            alpha_keys = {'alpha', 'opacity', 'mask', 'transparent'}
+            # Ban color, normal, etc. to prevent "Trunk_Color.png" being used as alpha
+            banned = {'color', 'diffuse', 'albedo', 'normal', 'nrm', 'bump', 'roughness', 'rough', 'specular', 'ao'}
+            
+            match = find_best_match(mat_tokens, alpha_keys, banned)
+            if match:
+                print(f"  -> Matched Alpha: {os.path.basename(match)}")
+                try:
+                    img = bpy.data.images.load(match)
+                    tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
+                    tex.image = img
+                    tex.location = (-300, -300)
+                    mat.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Alpha'])
+                    
+                    mat.blend_method = 'HASHED'
+                    mat.shadow_method = 'HASHED'
+                    mat.use_backface_culling = False
+                except:
+                    pass
+
+        # --- Normal ---
+        if 'Normal' in bsdf.inputs and not bsdf.inputs['Normal'].is_linked:
+            normal_keys = {'normal', 'nrm', 'bump', 'normalmap'}
+            banned = {'color', 'diffuse', 'albedo', 'roughness', 'rough', 'specular', 'ao', 'alpha'}
+            match = find_best_match(mat_tokens, normal_keys, banned)
+            if match:
+                print(f"  -> Matched Normal: {os.path.basename(match)}")
+                try:
+                    img = bpy.data.images.load(match)
+                    tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
+                    tex.image = img
+                    tex.location = (-600, 0)
+                    tex.image.colorspace_settings.name = 'Non-Color'
+                    
+                    norm_map = mat.node_tree.nodes.new('ShaderNodeNormalMap')
+                    norm_map.location = (-300, 0)
+                    
+                    mat.node_tree.links.new(tex.outputs['Color'], norm_map.inputs['Color'])
+                    mat.node_tree.links.new(norm_map.outputs['Normal'], bsdf.inputs['Normal'])
+                except:
+                    pass
+
+        # --- Roughness ---
+        if 'Roughness' in bsdf.inputs and not bsdf.inputs['Roughness'].is_linked:
+            rough_keys = {'roughness', 'rough', 'gloss', 'smoothness'}
+            banned = {'color', 'diffuse', 'albedo', 'normal', 'nrm', 'alpha', 'specular', 'ao'}
+            match = find_best_match(mat_tokens, rough_keys, banned)
+            if match:
+                print(f"  -> Matched Roughness: {os.path.basename(match)}")
+                try:
+                    img = bpy.data.images.load(match)
+                    tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
+                    tex.image = img
+                    tex.image.colorspace_settings.name = 'Non-Color'
+                    tex.location = (-300, 100)
+                    mat.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Roughness'])
+                except:
+                    pass
+            
+def fix_transparency():
+    """
+    Ensures materials with Alpha connections are set to suitable Blend Modes.
+    Also attempts to AUTO-CONNECT alpha textures if they are found but not linked
+    (common in split texture sets like 'leaves color' + 'leaves alpha').
+    """
+    print("--- DEBUG: FIXING TRANSPARENCY ---")
+    
+    # Map of all images for lookups
+    all_images = {img.name.lower(): img for img in bpy.data.images}
+    
+    for mat in bpy.data.materials:
+        if not mat.use_nodes: continue
+        
+        bsdf = None
+        for node in mat.node_tree.nodes:
+            if node.type == 'BSDF_PRINCIPLED':
+                bsdf = node
+                break
+        
+        if not bsdf: continue
+        
+        # 1. Check existing link
+        alpha_socket = bsdf.inputs.get('Alpha')
+        if alpha_socket and alpha_socket.is_linked:
+            print(f"Material '{mat.name}': Alpha ALREADY linked. Setting HASHED.")
+            mat.blend_method = 'HASHED'
+            mat.shadow_method = 'HASHED'
+            mat.use_backface_culling = False
+            continue
+            
+        # 2. Heuristic: Logic for "Leaves" or broken alpha
+        # If material name implies vegetation, look for an alpha texture
+        mat_name_lower = mat.name.lower()
+        if 'leaf' in mat_name_lower or 'tree' in mat_name_lower or 'plant' in mat_name_lower:
+            print(f"Material '{mat.name}' is vegetation. Searching for alpha texture (Existing Images)...")
+            
+            found_alpha_img = None
+            used_images = [n.image for n in mat.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image]
+            
+            for img in bpy.data.images:
+                if img.name in [u.name for u in used_images]: continue
+                
+                img_name = img.name.lower()
+                if 'alpha' in img_name and any(x in img_name for x in ['leaf', 'leaves', 'foliage']):
+                    found_alpha_img = img
+                    break
+            
+            if found_alpha_img:
+                print(f"  -> Found unlinked Alpha Texture: {found_alpha_img.name}")
+                nodes = mat.node_tree.nodes
+                links = mat.node_tree.links
+                tex_node = nodes.new('ShaderNodeTexImage')
+                tex_node.image = found_alpha_img
+                tex_node.location = (-300, -200)
+                links.new(tex_node.outputs['Color'], alpha_socket)
+                
+                mat.blend_method = 'HASHED'
+                mat.shadow_method = 'HASHED'
+                mat.use_backface_culling = False
+
 
 def validate_model():
     """
@@ -242,9 +508,6 @@ def export_model(output_path):
     )
 
 if __name__ == "__main__":
-    # Arg parsing manually because blender arguments interfere
-    # Expected: ... -- --input X --output Y --sliceable True/False
-    
     import traceback
     try:
         args = sys.argv
