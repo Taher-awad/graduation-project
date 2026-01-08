@@ -31,7 +31,7 @@ class AssetResponse(BaseModel):
     status: AssetStatus
     is_sliceable: bool
     download_url: Optional[str] = None
-    metadata: Optional[dict] = None
+    metadata_json: Optional[dict] = None
 
     class Config:
         orm_mode = True

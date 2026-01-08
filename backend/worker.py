@@ -12,9 +12,9 @@ from celery_app import celery_app
 import optimize
 
 # Debugging Paths
+# Debugging Paths
 import sys
-print(f"DEBUG: CWD={os.getcwd()}")
-print(f"DEBUG: SYS.PATH={sys.path}")
+
 
 # MinIO Setup
 s3 = boto3.client('s3',
@@ -70,12 +70,20 @@ def process_asset(self, asset_id: str):
         
         # Capture output for debugging
         result = subprocess.run(blender_cmd, capture_output=True, text=True, cwd=os.getcwd())
+        
+        # ALWAYS print Blender output (so we can see if it did nothing on success)
+        print("--- BLENDER STDOUT ---")
+        print(result.stdout)
+        print("--- BLENDER STDERR ---")
+        print(result.stderr)
+        
         if result.returncode != 0:
             raise Exception(f"Blender Failed: {result.stderr}")
 
         # 3. Optimization (gltfpack)
-        print("Running Optimization...")
-        optimize.run_optimization(mid_glb_path, final_glb_path, asset.is_sliceable)
+        print("Skipping Optimization (Debug Mode)...")
+        # optimize.run_optimization(mid_glb_path, final_glb_path, asset.is_sliceable)
+        shutil.copy(mid_glb_path, final_glb_path)
 
         # 4. Upload Result
         processed_key = f"processed/{asset_id}.glb"

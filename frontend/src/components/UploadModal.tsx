@@ -14,6 +14,7 @@ export const UploadModal = ({ isOpen, onClose }: UploadModalProps) => {
   const [type, setType] = useState<AssetType>(AssetType.MODEL);
   const [isSliceable, setIsSliceable] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -44,6 +45,7 @@ export const UploadModal = ({ isOpen, onClose }: UploadModalProps) => {
       setFile(null);
     } catch (error) {
       console.error("Upload failed", error);
+      setErrorMsg("Upload failed. Check connection.");
     } finally {
       setUploading(false);
     }
@@ -57,6 +59,12 @@ export const UploadModal = ({ isOpen, onClose }: UploadModalProps) => {
         </button>
 
         <h2 className="text-xl font-bold mb-6">Upload New Asset</h2>
+
+        {errorMsg && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+            {errorMsg}
+          </div>
+        )}
 
         <div className="space-y-6">
           {/* File Drop Area */}
@@ -87,7 +95,7 @@ export const UploadModal = ({ isOpen, onClose }: UploadModalProps) => {
                   <Upload size={24} />
                 </div>
                 <p className="font-medium text-slate-200">Click to browse</p>
-                <p className="text-sm text-slate-500">Supports GLB, FBX, OBJ, BLEND, MP4, PDF</p>
+                <p className="text-sm text-slate-500">Supports GLB, FBX, OBJ, BLEND, MP4, PDF, PNG, JPG</p>
               </div>
             )}
           </div>
@@ -96,7 +104,7 @@ export const UploadModal = ({ isOpen, onClose }: UploadModalProps) => {
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-2">Asset Type</label>
             <div className="flex gap-2 bg-slate-950 p-1 rounded-lg">
-                {[AssetType.MODEL, AssetType.VIDEO, AssetType.SLIDE].map((t) => (
+                {[AssetType.MODEL, AssetType.VIDEO, AssetType.SLIDE, AssetType.IMAGE].map((t) => (
                     <button
                         key={t}
                         onClick={() => setType(t)}

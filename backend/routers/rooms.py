@@ -80,7 +80,12 @@ def invite_user(
     current_user: User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
-    room = db.query(Room).filter(Room.id == room_id).first()
+    try:
+        room_uid = uuid.UUID(room_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Room ID format")
+
+    room = db.query(Room).filter(Room.id == room_uid).first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
         
@@ -92,12 +97,12 @@ def invite_user(
         raise HTTPException(status_code=404, detail="User to invite not found")
         
     # Check if already member/invited
-    existing = db.query(RoomMember).filter(RoomMember.room_id == room_id, RoomMember.user_id == target_user.id).first()
+    existing = db.query(RoomMember).filter(RoomMember.room_id == room_uid, RoomMember.user_id == target_user.id).first()
     if existing:
         raise HTTPException(status_code=400, detail="User already invited or joined")
         
     new_member = RoomMember(
-        room_id=room_id,
+        room_id=room_uid,
         user_id=target_user.id,
         status=RoomMemberStatus.INVITED,
         permissions=invite.permissions
@@ -109,15 +114,20 @@ def invite_user(
 
 @router.post("/{room_id}/join")
 def join_room(room_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        room_uid = uuid.UUID(room_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Room ID format")
+
     member = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id, 
+        RoomMember.room_id == room_uid, 
         RoomMember.user_id == current_user.id,
         RoomMember.status == RoomMemberStatus.INVITED
     ).first()
     
     if not member:
         # Check if they are owner? Owner doesn't need to join.
-        room = db.query(Room).filter(Room.id == room_id).first()
+        room = db.query(Room).filter(Room.id == room_uid).first()
         if room and room.owner_id == current_user.id:
              return {"message": "You are the owner of this room"}
         raise HTTPException(status_code=400, detail="No pending invitation found for this room")
@@ -134,7 +144,12 @@ def update_room_status(
     current_user: User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
-    room = db.query(Room).filter(Room.id == room_id).first()
+    try:
+        room_uid = uuid.UUID(room_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Room ID format")
+
+    room = db.query(Room).filter(Room.id == room_uid).first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
         

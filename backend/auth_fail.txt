@@ -1,0 +1,72 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.7, pytest-8.4.2, pluggy-1.6.0
+rootdir: C:\Users\taher\Desktop\graduation v1\backend
+plugins: anyio-4.11.0, langsmith-0.4.53, asyncio-1.2.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 4 items
+
+tests\test_auth.py F...                                                  [100%]
+
+================================== FAILURES ===================================
+_____________________________ test_register_user ______________________________
+
+client = <starlette.testclient.TestClient object at 0x0000027DEEF706E0>
+
+    def test_register_user(client):
+        response = client.post(
+            "/auth/register",
+            json={"username": "newuser", "password": "password123", "role": "STUDENT"}
+        )
+>       assert response.status_code == 200
+E       assert 201 == 200
+E        +  where 201 = <Response [201 Created]>.status_code
+
+tests\test_auth.py:6: AssertionError
+============================== warnings summary ===============================
+database.py:11
+  C:\Users\taher\Desktop\graduation v1\backend\database.py:11: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+schemas.py:13
+  C:\Users\taher\Desktop\graduation v1\backend\schemas.py:13: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class UserResponse(BaseModel):
+
+..\..\..\AppData\Local\Programs\Python\Python313\Lib\site-packages\pydantic\_internal\_config.py:383
+  C:\Users\taher\AppData\Local\Programs\Python\Python313\Lib\site-packages\pydantic\_internal\_config.py:383: UserWarning: Valid config keys have changed in V2:
+  * 'orm_mode' has been renamed to 'from_attributes'
+    warnings.warn(message, UserWarning)
+
+schemas.py:27
+  C:\Users\taher\Desktop\graduation v1\backend\schemas.py:27: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class AssetResponse(BaseModel):
+
+schemas.py:46
+  C:\Users\taher\Desktop\graduation v1\backend\schemas.py:46: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class RoomResponse(BaseModel):
+
+main.py:32
+  C:\Users\taher\Desktop\graduation v1\backend\main.py:32: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+..\..\..\AppData\Local\Programs\Python\Python313\Lib\site-packages\fastapi\applications.py:4575
+  C:\Users\taher\AppData\Local\Programs\Python\Python313\Lib\site-packages\fastapi\applications.py:4575: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+tests/test_auth.py::test_login_success
+  C:\Users\taher\Desktop\graduation v1\backend\auth_utils.py:21: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_auth.py::test_register_user - assert 201 == 200
+=================== 1 failed, 3 passed, 8 warnings in 1.14s ===================

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="9" time="4.796" timestamp="2026-01-08T01:53:30.183701+02:00" hostname="boka"><testcase classname="tests.test_assets" name="test_list_assets_empty" time="0.917" /><testcase classname="tests.test_assets" name="test_upload_asset" time="0.456"><failure message="assert 422 == 200&#10; +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code">mock_task = &lt;MagicMock name='process_asset' id='2205458517024'&gt;
+mock_s3 = &lt;MagicMock name='s3' id='2205458521056'&gt;
+client = &lt;starlette.testclient.TestClient object at 0x000002017F80BED0&gt;
+auth_header = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0dXNlciIsInJvbGUiOiJTVFVERU5UIiwiZXhwIjoxNzY3ODQ4MDExfQ.vbp_0pAmkrWB2CC2ZXXlMsvrKCIAJsPhvo5de0HFR9A'}
+
+    @patch("routers.assets.s3")
+    @patch("routers.assets.process_asset")
+    def test_upload_asset(mock_task, mock_s3, client, auth_header):
+        # Mock return values
+        # mock_s3.upload_fileobj is called. We don't need return value usually.
+    
+        # Create dummy file
+        files = {'file': ('test.glb', b'dummy content', 'model/gltf-binary')}
+    
+        response = client.post(
+            "/assets/upload",
+            files=files,
+            data={"is_sliceable": "false"},
+            headers=auth_header
+        )
+    
+&gt;       assert response.status_code == 200
+E       assert 422 == 200
+E        +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code
+
+tests\test_assets.py:24: AssertionError</failure></testcase><testcase classname="tests.test_auth" name="test_register_user" time="0.227" /><testcase classname="tests.test_auth" name="test_register_duplicate_user" time="0.223" /><testcase classname="tests.test_auth" name="test_login_success" time="0.437" /><testcase classname="tests.test_auth" name="test_login_invalid_credentials" time="0.009" /><testcase classname="tests.test_rooms" name="test_create_room" time="0.456" /><testcase classname="tests.test_rooms" name="test_list_rooms" time="0.883"><failure message="AssertionError: assert 1 &gt;= 2&#10; +  where 1 = len([{'active_users_count': 0, 'created_at': '2026-01-07T23:53:33.955661', 'description': None, 'id': '30faae33-3810-46d8-ad6b-37917f6e6096', ...}])">client = &lt;starlette.testclient.TestClient object at 0x000002017F9EFAC0&gt;
+auth_header = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0dXNlciIsInJvbGUiOiJTVFVERU5UIiwiZXhwIjoxNzY3ODQ4MDEzfQ.05m17wFOpl_yN-JfTlwduW8WkTwjXUvO6YOCnkWug3o'}
+staff_auth_header = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdGFmZnVzZXIiLCJyb2xlIjoiU1RBRkYiLCJleHAiOjE3Njc4NDgwMTN9.zPGp6reDL7pG_IuL9LnOMPf7_NVVUd07i2TcBOi2_to'}
+
+    def test_list_rooms(client, auth_header, staff_auth_header):
+        # Create two rooms
+        client.post("/rooms/", json={"name": "Room A"}, headers=staff_auth_header)
+        # The list endpoint only returns rooms we own or joined.
+        # auth_header (Student) owns none.
+        # Let's use staff_auth_header to list.
+    
+        response = client.get("/rooms/", headers=staff_auth_header)
+        assert response.status_code == 200
+        data = response.json()
+&gt;       assert len(data) &gt;= 2
+E       AssertionError: assert 1 &gt;= 2
+E        +  where 1 = len([{'active_users_count': 0, 'created_at': '2026-01-07T23:53:33.955661', 'description': None, 'id': '30faae33-3810-46d8-ad6b-37917f6e6096', ...}])
+
+tests\test_rooms.py:22: AssertionError</failure></testcase><testcase classname="tests.test_rooms" name="test_join_room" time="0.902" /></testsuite></testsuites>
