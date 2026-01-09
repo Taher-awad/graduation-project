@@ -154,14 +154,99 @@ def normalize_model(is_sliceable, asset_id):
     except:
         pass
         
-    # --- SMART TEXTURE RELINKING ---
-    relink_textures()
+    # --- AUTO SMOOTH FIX (Weighted Normal Modifier) ---
+    print("DEBUG: Enabling Auto Smooth...", flush=True)
+    try:
+        for obj in mesh_objects:
+            if obj.type == 'MESH':
+                obj.data.use_auto_smooth = True
+                obj.data.auto_smooth_angle = 3.14159 / 3 # 60 degrees
+    except Exception as e:
+        print(f"Error enabling Auto Smooth: {e}", flush=True)
+
+    # --- STEPS WITH ERROR HANDLING ---
     
-    # --- AUTO-CONNECT (Disk Search) ---
-    auto_connect_textures()
+    try:
+        # --- SMART TEXTURE RELINKING ---
+        relink_textures()
+    except Exception as e:
+        print(f"Error in relink_textures: {e}", flush=True)
     
-    # --- TRANSPARENCY FIX ---
-    fix_transparency()
+    try:
+        # --- AUTO-CONNECT (Disk Search) ---
+        auto_connect_textures()
+    except Exception as e:
+        print(f"Error in auto_connect_textures: {e}", flush=True)
+    
+    try:
+        # --- TRANSPARENCY FIX ---
+        fix_transparency()
+    except Exception as e:
+        print(f"Error in fix_transparency: {e}", flush=True)
+
+# ... (relink_textures and auto_connect_textures remain similar, skipping to fix_transparency) ...
+
+    """
+    Ensures materials with Alpha connections are set to suitable Blend Modes.
+    Redesigned to be CONSERVATIVE:
+    - Vegetation -> Force HASHED
+    - Glass/Water -> Force BLEND
+    - Others -> Default to OPAQUE unless strong evidence implies transparency.
+    """
+    print("--- DEBUG: FIXING TRANSPARENCY ---", flush=True)
+    
+    for mat in bpy.data.materials:
+        if not mat.use_nodes: continue
+        
+        bsdf = None
+        for node in mat.node_tree.nodes:
+            if node.type == 'BSDF_PRINCIPLED':
+                bsdf = node
+                break
+        
+        if not bsdf: continue
+        
+        mat_name_lower = mat.name.lower()
+        is_vegetation = any(x in mat_name_lower for x in ['leaf', 'leaves', 'tree', 'plant', 'foliage', 'branch'])
+        is_glass = any(x in mat_name_lower for x in ['glass', 'water', 'liquid', 'ice'])
+        
+        # 1. Inspect existing link
+        alpha_socket = bsdf.inputs.get('Alpha')
+        if alpha_socket and alpha_socket.is_linked:
+            # We have a link. Is it legitimate transparency?
+            link = alpha_socket.links[0]
+            node = link.from_node
+            
+            # If it's the Cannon, we DO NOT want to force transparency just because of a stray link.
+            # We only force HASHED if it is Vegetation.
+            
+            if is_vegetation:
+                print(f"Material '{mat.name}': Detected Vegetation. Forcing HASHED.", flush=True)
+                mat.blend_method = 'HASHED'
+                mat.shadow_method = 'HASHED'
+                mat.use_backface_culling = False
+            elif is_glass:
+                print(f"Material '{mat.name}': Detected Glass. Forcing BLEND.", flush=True)
+                mat.blend_method = 'BLEND'
+                mat.shadow_method = 'HASHED'
+                mat.use_backface_culling = False
+            else:
+                # Generic Material (e.g. Cannon)
+                # If the Blend Mode is currently OPAQUE, keep it OPAQUE!
+                # Don't let a random map (like AO hooked to Alpha) turn it into a ghost.
+                print(f"Material '{mat.name}': Generic material with Alpha link. Keep existing mode or Default to OPAQUE.", flush=True)
+                if mat.blend_method == 'OPAQUE':
+                     # Ensure it stays opaque even if there's a link (often a mistake in Sketchfab imports)
+                     pass 
+                else:
+                    # If it WAS transparent, maybe it should be?
+                    # But for "Ghost Cannon", it was likely OPAQUE in Blender but my previous script forced HASHED.
+                    # Let's be safe: If it's not vegetation/glass, treat as OPAQUE unless user explicitly named it "Transparent".
+                    if 'trans' not in mat_name_lower and 'alpha' not in mat_name_lower:
+                        print(f"  -> Reverting '{mat.name}' to OPAQUE (Conservative Fix)", flush=True)
+                        mat.blend_method = 'OPAQUE'
+                        mat.shadow_method = 'OPAQUE'
+            continue
 
 def relink_textures():
     """
@@ -252,8 +337,13 @@ def auto_connect_textures():
             
             # 0. Check Banned Keywords
             # If the file contains any word that implies a DIFFERENT channel, skip it.
-            # e.g. If looking for Alpha, skip "color", "normal".
-            if any(b in cand_tokens for b in banned_keywords):
+            # CRITICAL FIX: If the banned word is part of the MATERIAL NAME, ignore the ban.
+            # e.g. Material "normal_leaves" -> "normal" is in mat_tokens.
+            # We shouldn't ban "normal_leaves_diffuse.png" just because it has "normal".
+            
+            effective_banned = banned_keywords - mat_tokens
+            
+            if any(b in cand_tokens for b in effective_banned):
                 continue
             
             # 1. Name Match (Intersection of unique words)
@@ -280,11 +370,26 @@ def auto_connect_textures():
             mat.use_nodes = True
             
         bsdf = None
+        output_node = None
+        
         for node in mat.node_tree.nodes:
             if node.type == 'BSDF_PRINCIPLED':
                 bsdf = node
-                break
-        
+            if node.type == 'OUTPUT_MATERIAL':
+                output_node = node
+                
+        # --- FIX: Handle Non-Standard Materials (e.g. Specular/Glossiness imports) ---
+        # If no Principled BSDF exists, the Auto-Connect logic would skip it.
+        # We enforce a Principled BSDF to ensure we can connect textures.
+        if not bsdf:
+            print(f"Material '{mat.name}' has no Principled BSDF. Resetting to PBR defaults...")
+            mat.node_tree.nodes.clear()
+            bsdf = mat.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
+            bsdf.location = (0, 300)
+            output_node = mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
+            output_node.location = (300, 300)
+            mat.node_tree.links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
+            
         if not bsdf: continue
         
         # Tokenize Material Name
@@ -295,12 +400,26 @@ def auto_connect_textures():
         mat_tokens = set(re.split(r'[._\-\s]+', clean_name))
         mat_tokens = {t for t in mat_tokens if len(t) > 2}
         
-        print(f"Material '{mat.name}' tokens: {mat_tokens}")
+        # --- ENHANCEMENT: Include Object Names in Tokens ---
+        # If the material name is generic (e.g., "Material"), it won't match anything.
+        # We check which objects use this material and add their names to the tokens.
         
-        # --- Base Color ---
+        # This is slightly expensive, but worth it for generic assets.
+        users = [obj for obj in bpy.data.objects if obj.type == 'MESH' and mat.name in [m.name for m in obj.data.materials if m]]
+        
+        for obj in users:
+            obj_name_clean = obj.name.lower()
+            obj_tokens = set(re.split(r'[._\-\s]+', obj_name_clean))
+            # Add reasonable tokens (len > 2), skipping generic ones like "mesh", "object", "poly"
+            for t in obj_tokens:
+                if len(t) > 2 and t not in {'mesh', 'object', 'poly', 'shape', 'model', 'group'}:
+                    mat_tokens.add(t)
+        
+        print(f"Material '{mat.name}' tokens (incl. Objects): {mat_tokens}")
+        
         if 'Base Color' in bsdf.inputs and not bsdf.inputs['Base Color'].is_linked:
             color_keys = {'color', 'diffuse', 'albedo', 'basecolor', 'base_color'}
-            banned = {'normal', 'nrm', 'bump', 'roughness', 'rough', 'gloss', 'specular', 'ao', 'ambient', 'alpha', 'opacity', 'mask'}
+            banned = {'normal', 'nrm', 'bump', 'roughness', 'rough', 'gloss', 'specular', 'ao', 'ambient', 'alpha', 'opacity', 'mask', 'occlusion'}
             match = find_best_match(mat_tokens, color_keys, banned)
             if match:
                 print(f"  -> Matched Base Color: {os.path.basename(match)}")
@@ -309,7 +428,19 @@ def auto_connect_textures():
                     tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
                     tex.image = img
                     tex.location = (-300, 300)
+                    tex.location = (-300, 300)
                     mat.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
+                    
+                    # --- AUTO-LINK EMBEDDED ALPHA ---
+                    # Many PBR textures (especially from GLTF/Unity) have Alpha in the Diffuse/Albedo channel.
+                    # If we just linked Base Color, let's also link its Alpha output to the BSDF Alpha.
+                    # We can assume if there's a separate Alpha file, it will overwrite this later.
+                    if 'Alpha' in bsdf.inputs:
+                        mat.node_tree.links.new(tex.outputs['Alpha'], bsdf.inputs['Alpha'])
+                        mat.blend_method = 'HASHED'
+                        mat.shadow_method = 'HASHED'
+                        mat.use_backface_culling = False
+                        print(f"    -> Linked Embedded Alpha from {os.path.basename(match)}")
                 except:
                     pass
 
@@ -317,7 +448,7 @@ def auto_connect_textures():
         if 'Alpha' in bsdf.inputs and not bsdf.inputs['Alpha'].is_linked:
             alpha_keys = {'alpha', 'opacity', 'mask', 'transparent'}
             # Ban color, normal, etc. to prevent "Trunk_Color.png" being used as alpha
-            banned = {'color', 'diffuse', 'albedo', 'normal', 'nrm', 'bump', 'roughness', 'rough', 'specular', 'ao'}
+            banned = {'color', 'diffuse', 'albedo', 'normal', 'nrm', 'bump', 'roughness', 'rough', 'specular', 'ao', 'occlusion'}
             
             match = find_best_match(mat_tokens, alpha_keys, banned)
             if match:
@@ -338,7 +469,7 @@ def auto_connect_textures():
         # --- Normal ---
         if 'Normal' in bsdf.inputs and not bsdf.inputs['Normal'].is_linked:
             normal_keys = {'normal', 'nrm', 'bump', 'normalmap'}
-            banned = {'color', 'diffuse', 'albedo', 'roughness', 'rough', 'specular', 'ao', 'alpha'}
+            banned = {'color', 'diffuse', 'albedo', 'roughness', 'rough', 'specular', 'ao', 'alpha', 'occlusion'}
             match = find_best_match(mat_tokens, normal_keys, banned)
             if match:
                 print(f"  -> Matched Normal: {os.path.basename(match)}")
@@ -360,7 +491,7 @@ def auto_connect_textures():
         # --- Roughness ---
         if 'Roughness' in bsdf.inputs and not bsdf.inputs['Roughness'].is_linked:
             rough_keys = {'roughness', 'rough', 'gloss', 'smoothness'}
-            banned = {'color', 'diffuse', 'albedo', 'normal', 'nrm', 'alpha', 'specular', 'ao'}
+            banned = {'color', 'diffuse', 'albedo', 'normal', 'nrm', 'alpha', 'specular', 'ao', 'occlusion'}
             match = find_best_match(mat_tokens, rough_keys, banned)
             if match:
                 print(f"  -> Matched Roughness: {os.path.basename(match)}")
@@ -399,10 +530,32 @@ def fix_transparency():
         # 1. Check existing link
         alpha_socket = bsdf.inputs.get('Alpha')
         if alpha_socket and alpha_socket.is_linked:
-            print(f"Material '{mat.name}': Alpha ALREADY linked. Setting HASHED.")
-            mat.blend_method = 'HASHED'
-            mat.shadow_method = 'HASHED'
-            mat.use_backface_culling = False
+            # Validate the link. Is it a mistake?
+            link = alpha_socket.links[0]
+            node = link.from_node
+            
+            is_valid_alpha = True
+            
+            if node.type == 'TEX_IMAGE' and node.image:
+                img_name = node.image.name.lower()
+                # If the image specifically says it's NOT alpha (e.g. Roughness, Normal, AO)
+                # Then this link is likely garbage/mistake from an auto-importer.
+                banned_for_alpha = ['diffuse', 'color', 'roughness', 'metal', 'normal', 'nrm', 'ao', 'occlusion', 'bump']
+                # But be careful: "Leaves_Color_Alpha.png" might be valid.
+                # So only ban if it DOESN'T contain "alpha" or "opacity".
+                
+                if any(x in img_name for x in banned_for_alpha) and not any(x in img_name for x in ['alpha', 'opacity', 'mask', 'trans']):
+                    print(f"Material '{mat.name}': Found SUSPICIOUS Alpha Link to '{img_name}'. Unlinking and forcing OPAQUE.")
+                    mat.node_tree.links.remove(link)
+                    mat.blend_method = 'OPAQUE'
+                    mat.shadow_method = 'OPAQUE'
+                    is_valid_alpha = False
+            
+            if is_valid_alpha:
+                print(f"Material '{mat.name}': Alpha ALREADY linked. Setting HASHED.")
+                mat.blend_method = 'HASHED'
+                mat.shadow_method = 'HASHED'
+                mat.use_backface_culling = False
             continue
             
         # 2. Heuristic: Logic for "Leaves" or broken alpha
