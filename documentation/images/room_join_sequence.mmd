@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant Unity as Unity Client
+    participant API as Backend API
+    participant Photon as Photon Fusion Cloud
+
+    Note over U, U: User Launches Unity App
+
+    U->>Unity: Login (Username/Password)
+    Unity->>API: POST /auth/login
+    API-->>Unity: Return JWT Token
+
+    U->>Unity: Select Room to Join
+    Unity->>API: GET /rooms/{id} (Check Access)
+    API-->>Unity: Return Room Details (inc. UUID)
+    
+    Note over Unity, Photon: CRITICAL: Using Room UUID as Session Name
+
+    Unity->>Photon: Start(SessionName = Room.UUID)
+    activate Photon
+    Photon->>Photon: Create or Join Session
+    Photon-->>Unity: Connected (Player Spawned)
+    deactivate Photon
+
+    Unity->>API: GET /assets (Fetch Room Content)
+    API-->>Unity: Return Asset URLs
+    Unity->>Unity: Spawn 3D Models (Runtime)
+    
+    Note over U, Path: User can now see others & interact

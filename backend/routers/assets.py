@@ -7,7 +7,7 @@ from botocore.client import Config
 import os
 
 from database import get_db
-from models import Asset, User, AssetStatus, AssetType
+from models import Asset, User, AssetStatus, AssetType, UserRole
 from dependencies import get_current_user
 from schemas import AssetResponse
 
@@ -62,6 +62,10 @@ async def upload_asset(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # RBAC: Only Staff can upload
+    if current_user.role != UserRole.STAFF:
+        raise HTTPException(status_code=403, detail="Only Staff members can upload assets.")
+
     asset_id = uuid.uuid4()
     file_ext = file.filename.split('.')[-1].lower()
     
