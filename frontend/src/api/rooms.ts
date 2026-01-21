@@ -31,3 +31,12 @@ export const inviteUser = async (roomId: string, username: string): Promise<any>
   const response = await api.post(`/rooms/${roomId}/invite`, { username });
   return response.data;
 };
+
+export const deleteRoom = async (roomId: string): Promise<void> => {
+  await api.delete(`/rooms/${roomId}`);
+};
+
+export const updateRoomStatus = async (roomId: string, is_online: boolean): Promise<any> => {
+  const response = await api.put(`/rooms/${roomId}/status?is_online=${is_online}`);
+  return response.data;
+};

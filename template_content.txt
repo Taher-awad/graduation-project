@@ -1,0 +1,15 @@
+Sections of the Project Report
+Students are required to submit a project report as a pdf file, five days before the  
+final semester presentation.
+The report should be a typical SWE report with the following sections:
+ Section1: Requirements listing and analysis
+ Section2: Solution Design and diagrams
+ Section3: Project Planning
+ Section4: Implementation approach
+ Section 5:  Adopted ethics principles. For this section make sure you have  
+answers for the following questions:
+ What are the software ethics principles that you adopted?
+ How did you apply recognized ethics principles? Showing the ethical  
+alternatives and their consequences and which action did you choose?
+ Clearly mention what documents sources and references you used, and  
+how any license/copyright/legal/privacy are handled?

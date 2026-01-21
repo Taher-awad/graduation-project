@@ -160,3 +160,27 @@ def update_room_status(
     db.commit()
     
     return {"status": "updated", "is_online": is_online}
+
+@router.delete("/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_room(
+    room_id: str, 
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    try:
+        room_uid = uuid.UUID(room_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Room ID format")
+
+    room = db.query(Room).filter(Room.id == room_uid).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+        
+    if room.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the room OWNER can delete it")
+
+    # Cascade delete members (if not handled by DB FK)
+    db.query(RoomMember).filter(RoomMember.room_id == room_uid).delete()
+    db.delete(room)
+    db.commit()
+    return None
