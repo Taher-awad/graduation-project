@@ -1,5 +1,4 @@
-from sqlalchemy import Column, String, Boolean, Enum, ForeignKey, Integer, DateTime
-from sqlalchemy.dialects.postgresql import UUID, JSON
+from sqlalchemy import Column, String, Boolean, Enum, ForeignKey, Integer, DateTime, Uuid, JSON
 from sqlalchemy.orm import relationship
 import uuid
 import enum
@@ -14,6 +13,7 @@ class AssetType(str, enum.Enum):
     MODEL = "MODEL"
     VIDEO = "VIDEO"
     SLIDE = "SLIDE"
+    IMAGE = "IMAGE"
 
 class RoomMemberStatus(str, enum.Enum):
     INVITED = "INVITED"
@@ -28,7 +28,7 @@ class AssetStatus(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     username = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.STUDENT, nullable=False)
@@ -40,10 +40,10 @@ class User(Base):
 class Room(Base):
     __tablename__ = "rooms"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    owner_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
     is_online = Column(Boolean, default=False)
     max_participants = Column(Integer, default=20)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -55,8 +55,8 @@ class Room(Base):
 class RoomMember(Base):
     __tablename__ = "room_members"
     
-    room_id = Column(UUID(as_uuid=True), ForeignKey("rooms.id"), primary_key=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
+    room_id = Column(Uuid, ForeignKey("rooms.id"), primary_key=True)
+    user_id = Column(Uuid, ForeignKey("users.id"), primary_key=True)
     status = Column(Enum(RoomMemberStatus), default=RoomMemberStatus.INVITED)
     permissions = Column(JSON, default={"can_slice": True, "can_talk": False, "can_interact": True})
     
@@ -66,8 +66,8 @@ class RoomMember(Base):
 class Asset(Base):
     __tablename__ = "assets"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
     
     filename = Column(String, nullable=False)
     asset_type = Column(Enum(AssetType), default=AssetType.MODEL)

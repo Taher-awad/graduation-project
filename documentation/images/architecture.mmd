@@ -1,0 +1,55 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffcc00', 'edgeLabelBackground':'#ffffff', 'tertiaryColor': '#fff'}}}%%
+graph TB
+    user(("User<br/>(Student/Staff)"))
+    style user fill:#f9f,stroke:#333,stroke-width:2px
+
+    subgraph "Client Side"
+        direction TB
+        frontend["Frontend SPA<br/>(React)"]
+        unity["Unity Client<br/>(VR/Desktop)"]
+    end
+
+    subgraph "External Services"
+        photon[("Photon Fusion Cloud<br/>(Multiplayer Networking)")]
+    end
+
+    subgraph "Cortex AI Backend System"
+        direction TB
+        backend["Backend API<br/>(FastAPI)"]
+        worker["Processing Worker<br/>(Celery+Blender)"]
+        
+        database[("Database<br/>(PostgreSQL)")]
+        storage[("Object Storage<br/>(MinIO)")]
+        broker[("Message Broker<br/>(Redis)")]
+    end
+
+    %% User Interactions
+    user ==>|HTTPS| frontend
+    user ==>|"App Launch"| unity
+
+    %% Frontend Flows
+    frontend ==>|"JSON/HTTPS"| backend
+
+    %% Unity Flows
+    unity ==>|"Fetch Assets/Auth"| backend
+    unity -.->|"Join Room (UUID)"| photon
+
+    %% Backend Internals
+    backend ==>|SQL| database
+    backend ==>|"S3 API"| storage
+    backend ==>|Enqueue| broker
+    
+    broker -.->|Consume| worker
+    worker ==>|"Download/Upload"| storage
+    worker ==>|Update| database
+
+    %% Styling
+    style frontend fill:#1168bd,stroke:#0b4884,color:#fff
+    style unity fill:#000000,stroke:#fff,color:#fff
+    style backend fill:#1168bd,stroke:#0b4884,color:#fff
+    style worker fill:#1168bd,stroke:#0b4884,color:#fff
+    style photon fill:#ff6600,stroke:#333,color:#fff
+    
+    style database fill:#2b78e4,stroke:#0b4884,color:#fff,shape:cyl
+    style storage fill:#2b78e4,stroke:#0b4884,color:#fff,shape:cyl
+    style broker fill:#2b78e4,stroke:#0b4884,color:#fff,shape:cyl

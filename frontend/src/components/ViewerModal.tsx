@@ -1,63 +1,79 @@
 import { X, ExternalLink } from 'lucide-react';
 import { ModelViewer } from './ModelViewer';
 import type { Asset } from '../types';
+import { AssetType } from '../types';
 
-interface ViewerModalProps {
-  asset: Asset | null;
-  onClose: () => void;
-}
+const VideoViewer = ({ url }: { url: string }) => (
+  <video src={url} controls className="max-w-full max-h-[80vh] rounded-lg shadow-2xl" autoPlay />
+);
 
-export const ViewerModal = ({ asset, onClose }: ViewerModalProps) => {
+const ImageViewer = ({ url }: { url: string }) => (
+  <img src={url} alt="Asset" className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl" />
+);
+
+const PdfViewer = ({ url }: { url: string }) => (
+  <iframe src={url} className="w-full h-[80vh] bg-white rounded-lg shadow-2xl" title="PDF Viewer" />
+);
+
+const GenericViewer = ({ url, filename }: { url: string; filename: string }) => (
+  <div className="flex flex-col items-center justify-center p-8 bg-white dark:bg-slate-900 rounded-xl max-w-md text-center">
+    <p className="text-lg font-semibold mb-4 text-slate-900 dark:text-white">Cannot preview {filename}</p>
+    <a 
+      href={url} 
+      target="_blank" 
+      rel="noopener noreferrer"
+      className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-medium transition-colors"
+    >
+      <ExternalLink size={20} />
+      Download / Open Externally
+    </a>
+  </div>
+);
+
+export const ViewerModal = ({ asset, onClose }: { asset: Asset | null; onClose: () => void }) => {
   if (!asset) return null;
 
-  // Use processed path if available (via Presigned URL typically), else try raw?
-  // Our API returns 'download_url'.
-  // Note: MinIO localhost URL needs to be accessible by browser.
-  // If running inside Docker, 'minio:9000' won't work for host browser.
-  // We need to ensure the download_url is localhost:9000.
-  // The backend generates it based on MINIO_ENDPOINT which is often 'minio' in docker-compose.
-  // For this demo, let's blindly replace minio with localhost if needed or trust the backend.
-  
-  const modelUrl = asset.download_url?.replace("http://minio:9000", "http://localhost:9000");
+  // Code previously replaced 'minio' with 'localhost', but this broke the 'minioadmin' credential key.
+  // Backend now generates correct localhost URLs using s3_signer.
+  const modelUrl = asset.download_url;
+
+  const renderContent = () => {
+    if (!modelUrl) {
+      return (
+        <div className="p-8 bg-white dark:bg-slate-900 rounded-xl">
+           <p className="text-slate-500">Preview not available (Asset Processing or URL expired)</p>
+        </div>
+      );
+    }
+
+    switch (asset.asset_type) {
+      case AssetType.MODEL:
+        return <div className="w-[90vw] h-[80vh] max-w-6xl"><ModelViewer url={modelUrl} /></div>;
+      case AssetType.VIDEO:
+        return <VideoViewer url={modelUrl} />;
+      case AssetType.IMAGE:
+        return <ImageViewer url={modelUrl} />;
+      case AssetType.SLIDE:
+        // Simple check for PDF vs generic file
+        if (asset.filename.toLowerCase().endsWith('.pdf')) {
+            return <div className="w-[90vw] max-w-6xl"><PdfViewer url={modelUrl} /></div>;
+        }
+        return <GenericViewer url={modelUrl} filename={asset.filename} />;
+      default:
+        return <GenericViewer url={modelUrl} filename={asset.filename} />;
+    }
+  };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl h-[80vh] flex flex-col shadow-2xl relative">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-slate-800">
-          <div>
-            <h2 className="text-lg font-bold text-slate-200">{asset.filename}</h2>
-            <p className="text-xs text-slate-500 uppercase tracking-wider">{asset.asset_type}</p>
-          </div>
-          <div className="flex items-center gap-2">
-             {asset.download_url && (
-                <a 
-                    href={asset.download_url} 
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"
-                    title="Download Original"
-                >
-                    <ExternalLink size={20} />
-                </a>
-             )}
-            <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
-                <X size={20} />
-            </button>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 bg-black/20 p-4 relative">
-            {modelUrl ? (
-                <ModelViewer url={modelUrl} />
-            ) : (
-                <div className="flex items-center justify-center h-full text-slate-500">
-                    Preview not available (Asset Processing or URL expired)
-                </div>
-            )}
-        </div>
-      </div>
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <button 
+        onClick={onClose}
+        className="absolute top-4 right-4 text-white/50 hover:text-white p-2 transition-colors z-[60]"
+      >
+        <X size={32} />
+      </button>
+      
+      {renderContent()}
     </div>
   );
 };

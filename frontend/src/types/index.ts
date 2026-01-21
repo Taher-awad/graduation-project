@@ -8,7 +8,8 @@ export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 export const AssetType = {
   MODEL: "MODEL",
   VIDEO: "VIDEO",
-  SLIDE: "SLIDE"
+  SLIDE: "SLIDE",
+  IMAGE: "IMAGE"
 } as const;
 
 export type AssetType = (typeof AssetType)[keyof typeof AssetType];
@@ -34,7 +35,7 @@ export interface Asset {
   status: AssetStatus;
   is_sliceable: boolean;
   download_url?: string;
-  metadata?: any;
+  metadata_json?: any;
 }
 
 export interface Room {

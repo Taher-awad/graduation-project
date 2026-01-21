@@ -10,11 +10,10 @@ from database import SessionLocal
 from models import Asset, AssetStatus
 from celery_app import celery_app
 import optimize
+from utils_worker import find_main_model_file
 
 # Debugging Paths
 import sys
-print(f"DEBUG: CWD={os.getcwd()}")
-print(f"DEBUG: SYS.PATH={sys.path}")
 
 # MinIO Setup
 s3 = boto3.client('s3',
@@ -53,29 +52,103 @@ def process_asset(self, asset_id: str):
         print(f"Downloading {asset.original_path}...")
         s3.download_file(BUCKET_NAME, asset.original_path, local_input_path)
 
+        # Logic for Zip Files
+        target_model_path = local_input_path
+        blender_cwd = work_dir # Default CWD is the tmp root
+
+        if input_filename.lower().endswith('.zip'):
+            print("Detected ZIP file. Extracting...")
+            import zipfile
+            
+            extract_dir = os.path.join(work_dir, "extracted")
+            os.makedirs(extract_dir, exist_ok=True)
+            
+            with zipfile.ZipFile(local_input_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+                
+            # Find the main model file
+            found_file = find_main_model_file(extract_dir)
+            
+            # --- START NESTED ZIP HANDLING ---
+            # If no model found, look for inner zips (e.g. source/model.zip)
+            if not found_file:
+                print("No model found in root. Checking for nested ZIPs...")
+                inner_zips = []
+                for root, dirs, files in os.walk(extract_dir):
+                    for f in files:
+                        if f.lower().endswith('.zip'):
+                            inner_zips.append(os.path.join(root, f))
+                
+                if inner_zips:
+                    # Sort by size to pick "main" inner zip? Or just process all?
+                    # Generally just picking the largest one is a safe bet for the "Model Archive"
+                    largest_zip = max(inner_zips, key=os.path.getsize)
+                    print(f"Found inner ZIP: {largest_zip}. Extracting...")
+                    try:
+                        with zipfile.ZipFile(largest_zip, 'r') as z_inner:
+                            # Extract into the SAME directory where the zip lived
+                            # This usually keeps "textures" relative logic intact
+                            extract_inner_path = os.path.dirname(largest_zip)
+                            z_inner.extractall(extract_inner_path)
+                        
+                        # Search again
+                        found_file = find_main_model_file(extract_dir)
+                    except Exception as e:
+                        print(f"Failed to extract inner zip: {e}")
+            # --- END NESTED ZIP HANDLING ---
+            
+            if not found_file:
+                raise Exception("No valid 3D model (.blend, .gltf, .fbx, .obj) found in ZIP (even after checking nested archives)")
+                
+            target_model_path = found_file
+            # CRITICAL: We must run Blender from the directory OF the model file
+            # so relative texture paths (like ./textures/wood.png) work.
+            blender_cwd = os.path.dirname(found_file)
+            print(f"Main model found: {target_model_path}")
+            print(f"Setting Blender CWD to: {blender_cwd}")
+
         # 2. Blender Processing (Import -> Normalize -> Export GLB)
-        # Note: We assume 'blender' is in PATH (handled by Dockerfile)
-        # We pass arguments after --
         print("Running Blender...")
         blender_cmd = [
             "blender",
             "-b", # Background
-            "-P", "process_model.py", # Script
+            "-P", "/app/process_model.py", # Absolute path to ensure it runs from any CWD
             "--", # Split args
-            "--input", local_input_path,
+            "--input", target_model_path,
             "--output", mid_glb_path,
             "--sliceable", str(asset.is_sliceable),
             "--id", str(asset.id)
         ]
         
         # Capture output for debugging
-        result = subprocess.run(blender_cmd, capture_output=True, text=True, cwd=os.getcwd())
+        result = subprocess.run(blender_cmd, capture_output=True, text=True, cwd=blender_cwd)
+        
+        # ALWAYS print Blender output (so we can see if it did nothing on success)
+        print("--- BLENDER STDOUT ---")
+        print(result.stdout)
+        print("--- BLENDER STDERR ---")
+        print(result.stderr)
+        
         if result.returncode != 0:
+            # Check for Validation JSON
+            if "VALIDATION_FAILED" in result.stdout:
+                try:
+                    # Find the line after VALIDATION_FAILED
+                    lines = result.stdout.splitlines()
+                    for i, line in enumerate(lines):
+                        if "VALIDATION_FAILED" in line:
+                            error_json = lines[i+1]
+                            errors = json.loads(error_json)
+                            # Raise specific error
+                            raise Exception(f"Validation Failed: {', '.join(errors)}")
+                except ValueError:
+                    pass
+            
             raise Exception(f"Blender Failed: {result.stderr}")
 
         # 3. Optimization (gltfpack)
-        print("Running Optimization...")
-        optimize.run_optimization(mid_glb_path, final_glb_path, asset.is_sliceable)
+        # Note: Optimization disabled
+        shutil.copy(mid_glb_path, final_glb_path)
 
         # 4. Upload Result
         processed_key = f"processed/{asset_id}.glb"
