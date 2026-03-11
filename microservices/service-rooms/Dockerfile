@@ -12,6 +12,9 @@ COPY shared /app/shared
 # Copy the specific microservice
 COPY service-rooms /app/service-rooms
 
+# Install shared module
+RUN pip install -e /app/shared
+
 # Set working directory to the microservice itself so imports work seamlessly
 WORKDIR /app/service-rooms
 ENV PYTHONPATH=/app

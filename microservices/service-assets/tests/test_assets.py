@@ -1,6 +1,8 @@
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.future import select
 from sqlalchemy.orm import sessionmaker
 import sys
 import os
@@ -31,41 +33,52 @@ class MockCeleryApp:
 
 assets.celery_app = MockCeleryApp()
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_assets.db"
+SQLALCHEMY_DATABASE_URL = "sqlite+aiosqlite:///./test_assets.db"
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=False)
+TestingSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False
 )
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-Base.metadata.drop_all(bind=engine)
-Base.metadata.create_all(bind=engine)
+async def override_get_db():
+    async with TestingSessionLocal() as session:
+        yield session
 
-# Seed Test Teacher
-db = TestingSessionLocal()
-test_teacher = User(username="test_teacher", password_hash="dummy", role=UserRole.STAFF)
-db.add(test_teacher)
-db.commit()
-db.refresh(test_teacher)
-db.close()
-
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-def override_get_current_user_teacher():
-    db = TestingSessionLocal()
-    return db.query(User).filter(User.username == "test_teacher").first()
+async def override_get_current_user_teacher():
+    async with TestingSessionLocal() as session:
+        result = await session.execute(select(User).filter(User.username == "test_teacher"))
+        return result.scalars().first()
 
 app.dependency_overrides[get_db] = override_get_db
 app.dependency_overrides[get_current_user] = override_get_current_user_teacher
 
-client = TestClient(app)
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def setup_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
 
-def test_upload_asset():
+    async with TestingSessionLocal() as db:
+        test_teacher = User(username="test_teacher", password_hash="dummy", role=UserRole.STAFF)
+        db.add(test_teacher)
+        await db.commit()
+
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+@pytest_asyncio.fixture
+async def async_client():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+@pytest.mark.asyncio
+async def test_upload_asset(async_client: AsyncClient):
     # Mimic a valid .glb file upload
     file_content = b"mock glb binary data"
     files = {
@@ -76,7 +89,7 @@ def test_upload_asset():
         "is_sliceable": "True"
     }
     
-    response = client.post("/assets/upload", files=files, data=data)
+    response = await async_client.post("/assets/upload", files=files, data=data)
     
     assert response.status_code == 200
     json_resp = response.json()

@@ -2,6 +2,7 @@ fastapi
 uvicorn
 gunicorn
 sqlalchemy
+aiosqlite
 asyncpg
 psycopg2-binary
 python-jose[cryptography]

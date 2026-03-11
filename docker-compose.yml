@@ -1,21 +1,15 @@
 version: "3.8"
 
 services:
-  api:
+  db-migration:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: cortex_api_monolith
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./backend:/app
-    # Removed ports directive since the Gateway handles inbound traffic now
+      context: ./microservices
+      dockerfile: Dockerfile.alembic
+    container_name: cortex_db_migration
     env_file:
       - .env
     depends_on:
       - db
-      - redis
-      - minio
 
   service-auth:
     build:
@@ -69,7 +63,6 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - api
       - service-auth
       - service-rooms
       - service-assets
@@ -128,8 +121,6 @@ services:
       - /app/node_modules
     env_file:
       - .env
-    depends_on:
-      - api
 
 volumes:
   postgres_data:

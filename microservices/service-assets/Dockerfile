@@ -12,6 +12,8 @@ COPY shared /app/shared
 # Copy the specific microservice
 COPY service-assets /app/service-assets
 
+RUN pip install -e /app/shared
+
 WORKDIR /app/service-assets
 ENV PYTHONPATH=/app
 

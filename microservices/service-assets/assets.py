@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from typing import List, Optional
 import uuid
 import boto3
@@ -18,19 +19,25 @@ router = APIRouter(prefix="/assets", tags=["assets"])
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 celery_app = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
 
+# Env variable validation
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
+if not MINIO_ACCESS_KEY or not MINIO_SECRET_KEY:
+    raise ValueError("MINIO_ACCESS_KEY or MINIO_SECRET_KEY environment variable is missing")
+
 # MinIO Client Setup
 s3 = boto3.client('s3',
                     endpoint_url=os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
-                    aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-                    aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+                    aws_access_key_id=MINIO_ACCESS_KEY,
+                    aws_secret_access_key=MINIO_SECRET_KEY,
                     config=Config(signature_version='s3v4'),
                     region_name='us-east-1')
 
 # Public S3 Client (For generating browser-accessible URLs)
 s3_signer = boto3.client('s3',
                     endpoint_url=os.getenv("MINIO_EXTERNAL_ENDPOINT", "http://localhost:9000"),
-                    aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-                    aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+                    aws_access_key_id=MINIO_ACCESS_KEY,
+                    aws_secret_access_key=MINIO_SECRET_KEY,
                     config=Config(signature_version='s3v4', s3={'addressing_style': 'path'}),
                     region_name='us-east-1')
 
@@ -51,7 +58,7 @@ async def upload_asset(
     asset_type: AssetType = Form(...),
     is_sliceable: bool = Form(False),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     # RBAC: Only Staff can upload
     if current_user.role != UserRole.STAFF:
@@ -107,8 +114,8 @@ async def upload_asset(
         status=initial_status
     )
     db.add(new_asset)
-    db.commit()
-    db.refresh(new_asset)
+    await db.commit()
+    await db.refresh(new_asset)
     
     # Decentralized Task Trigger: Send to Redis directly without importing the heavy worker
     if asset_type == AssetType.MODEL:
@@ -117,16 +124,20 @@ async def upload_asset(
     return {"id": str(new_asset.id), "status": new_asset.status, "type": new_asset.asset_type}
 
 @router.get("/", response_model=List[AssetResponse])
-def list_assets(
+async def list_assets(
+    skip: int = 0,
+    limit: int = 50,
     asset_type: Optional[AssetType] = None,
     current_user: User = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    query = db.query(Asset).filter(Asset.owner_id == current_user.id)
+    query = select(Asset).filter(Asset.owner_id == current_user.id)
     if asset_type:
         query = query.filter(Asset.asset_type == asset_type)
         
-    assets = query.all()
+    query = query.offset(skip).limit(limit)
+    result = await db.execute(query)
+    assets = result.scalars().all()
     # Generate URLs
     for asset in assets:
         if asset.status == AssetStatus.COMPLETED and asset.processed_path:
@@ -141,9 +152,10 @@ def list_assets(
     return assets
 
 @router.get("/{asset_id}", response_model=AssetResponse)
-def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     # Try uuid parsing so it matches db schema strictness if needed, though postgres usually handles string uuids
-    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.owner_id == current_user.id).first()
+    result = await db.execute(select(Asset).filter(Asset.id == asset_id, Asset.owner_id == current_user.id))
+    asset = result.scalars().first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     
@@ -161,8 +173,9 @@ def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db:
     return asset
 
 @router.delete("/{asset_id}", status_code=204)
-def delete_asset(asset_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.owner_id == current_user.id).first()
+async def delete_asset(asset_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Asset).filter(Asset.id == asset_id, Asset.owner_id == current_user.id))
+    asset = result.scalars().first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
@@ -178,6 +191,6 @@ def delete_asset(asset_id: str, current_user: User = Depends(get_current_user), 
         except Exception as e:
             print(f"Failed to delete S3 object {path}: {e}")
 
-    db.delete(asset)
-    db.commit()
+    await db.delete(asset)
+    await db.commit()
     return None

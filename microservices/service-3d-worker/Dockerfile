@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy shared models
 COPY shared/ /app/shared/
+RUN pip install -e /app/shared/
 
 # Copy worker files
 COPY service-3d-worker/ /app/

@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY shared/requirements.txt ./shared/requirements.txt
+RUN pip install --no-cache-dir alembic psycopg2-binary
+# We only need sqlalchemy and psycopg2 for migrations
+
+COPY shared/ /app/shared/
+RUN pip install -e /app/shared/
+
+COPY alembic.ini .
+COPY alembic /app/alembic
+
+# Wait for DB, then run migrations
+CMD ["alembic", "upgrade", "head"]

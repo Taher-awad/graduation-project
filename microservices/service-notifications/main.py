@@ -8,14 +8,6 @@ import redis.asyncio as redis
 
 app = FastAPI(title="Cortex AI - Notifications Service")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 async def get_redis_client():

@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 import os
 
 # Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey") # Change in production
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable is missing")
 ALGORITHM = "HS256"
 # Reduced to 15 minutes as per Security Strategy
 ACCESS_TOKEN_EXPIRE_MINUTES = 15

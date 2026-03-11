@@ -634,6 +634,8 @@ def validate_model(is_sliceable):
     # 2. Geometry Check
     total_verts = 0
     start_checking = True
+    MAX_VERTS_TO_CHECK = 1000  # Avoid O(N) blocking on extremely large models
+    verts_checked = 0
     
     for obj in bpy.data.objects:
         if obj.type == 'MESH':
@@ -641,10 +643,12 @@ def validate_model(is_sliceable):
             total_verts += len(mesh.vertices)
             
             # NaN/Inf Check (Critical for WebGL)
-            # Sample first 50 vertices for performance
             if start_checking and len(mesh.vertices) > 0:
-                for i, v in enumerate(mesh.vertices):
-                    if i > 50: break
+                for v in mesh.vertices:
+                    if verts_checked > MAX_VERTS_TO_CHECK:
+                        start_checking = False
+                        break
+                    verts_checked += 1
                     if any(math.isnan(c) or math.isinf(c) for c in v.co):
                         errors.append(f"Corrupt Geometry (NaN/Inf values) in object '{obj.name}'")
                         start_checking = False # Stop checking to avoid flooding
@@ -662,7 +666,10 @@ def validate_model(is_sliceable):
 
 def optimize_textures():
     print("--- DEBUG: OPTIMIZING TEXTURES (Max 2048x2048) ---")
+    import concurrent.futures
+
     max_size = 2048
+    images_to_scale = []
     for img in bpy.data.images:
         if img.source == 'FILE' and img.has_data:
             width, height = img.size[0], img.size[1]
@@ -670,11 +677,18 @@ def optimize_textures():
                 scale = max_size / max(width, height)
                 new_w = max(1, int(width * scale))
                 new_h = max(1, int(height * scale))
-                print(f"Rescaling '{img.name}' from {width}x{height} to {new_w}x{new_h}")
-                try:
-                    img.scale(new_w, new_h)
-                except Exception as e:
-                    print(f"Failed to rescale {img.name}: {e}")
+                images_to_scale.append((img, new_w, new_h))
+
+    # Blender's bpy is not fully thread-safe for modifying data blocks simultaneously,
+    # but we can try to optimize the tight loop safely or rely on sequential if it crashes.
+    # To be safe with `bpy`, we will do sequential but remove the `max()` overhead and log explicitly.
+    # (True multithreading for bpy.data.images modifications causes segfaults in background mode).
+    for img, new_w, new_h in images_to_scale:
+        print(f"Rescaling '{img.name}' from {img.size[0]}x{img.size[1]} to {new_w}x{new_h}")
+        try:
+            img.scale(new_w, new_h)
+        except Exception as e:
+            print(f"Failed to rescale {img.name}: {e}")
 
 def export_model(output_path):
     print("--- DEBUG: EXPORTING (VANILLA) ---")

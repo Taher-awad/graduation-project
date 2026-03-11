@@ -30,10 +30,15 @@ def broadcast_status(user_id: str, asset_id: str, status: str, extra: dict = Non
 import sys
 
 # MinIO Setup
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
+if not MINIO_ACCESS_KEY or not MINIO_SECRET_KEY:
+    raise ValueError("MINIO_ACCESS_KEY or MINIO_SECRET_KEY environment variable is missing")
+
 s3 = boto3.client('s3',
                     endpoint_url=os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
-                    aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-                    aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+                    aws_access_key_id=MINIO_ACCESS_KEY,
+                    aws_secret_access_key=MINIO_SECRET_KEY,
                     config=Config(signature_version='s3v4'),
                     region_name='us-east-1')
 

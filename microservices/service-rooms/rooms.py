@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy import or_
 from typing import List
 import uuid
 
@@ -11,7 +14,7 @@ from shared.dependencies import get_current_user
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 @router.post("/", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
-def create_room(room: RoomCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def create_room(room: RoomCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if current_user.role != UserRole.STAFF:
         raise HTTPException(status_code=403, detail="Only STAFF can create rooms")
     
@@ -23,24 +26,23 @@ def create_room(room: RoomCreate, current_user: User = Depends(get_current_user)
         owner_id=current_user.id
     )
     db.add(new_room)
-    db.commit()
-    db.refresh(new_room)
+    await db.commit()
+    await db.refresh(new_room)
     
     return new_room
 
 @router.get("/", response_model=List[RoomResponse])
-def list_rooms(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 1. Rooms owned by user
-    owned_rooms = db.query(Room).filter(Room.owner_id == current_user.id).all()
+async def list_rooms(skip: int = 0, limit: int = 50, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Optimized query
+    stmt = select(Room).outerjoin(RoomMember, Room.id == RoomMember.room_id).filter(
+        or_(
+            Room.owner_id == current_user.id,
+            (RoomMember.user_id == current_user.id) & (RoomMember.status == RoomMemberStatus.JOINED)
+        )
+    ).distinct().offset(skip).limit(limit)
     
-    # 2. Rooms where user is a JOINED member
-    joined_memberships = db.query(RoomMember).filter(
-        RoomMember.user_id == current_user.id,
-        RoomMember.status == RoomMemberStatus.JOINED
-    ).all()
-    joined_rooms = [m.room for m in joined_memberships]
-    
-    all_rooms = list(set(owned_rooms + joined_rooms))
+    result = await db.execute(stmt)
+    all_rooms = result.scalars().all()
     
     # Decorate with custom fields
     results = []
@@ -54,11 +56,13 @@ def list_rooms(current_user: User = Depends(get_current_user), db: Session = Dep
     return results
 
 @router.get("/invitations", response_model=List[InvitationResponse])
-def list_invitations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    invites = db.query(RoomMember).filter(
+async def list_invitations(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stmt = select(RoomMember).options(selectinload(RoomMember.room).selectinload(Room.owner)).filter(
         RoomMember.user_id == current_user.id,
         RoomMember.status == RoomMemberStatus.INVITED
-    ).all()
+    )
+    result = await db.execute(stmt)
+    invites = result.scalars().all()
     
     results = []
     for inv in invites:
@@ -71,30 +75,33 @@ def list_invitations(current_user: User = Depends(get_current_user), db: Session
     return results
 
 @router.post("/{room_id}/invite")
-def invite_user(
+async def invite_user(
     room_id: str, 
     invite: InviteCreate, 
     current_user: User = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         room_uid = uuid.UUID(room_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid Room ID format")
 
-    room = db.query(Room).filter(Room.id == room_uid).first()
+    result = await db.execute(select(Room).filter(Room.id == room_uid))
+    room = result.scalars().first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
         
     if room.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the room OWNER can invite members")
     
-    target_user = db.query(User).filter(User.username == invite.username).first()
+    res_user = await db.execute(select(User).filter(User.username == invite.username))
+    target_user = res_user.scalars().first()
     if not target_user:
         raise HTTPException(status_code=404, detail="User to invite not found")
         
     # Check if already member/invited
-    existing = db.query(RoomMember).filter(RoomMember.room_id == room_uid, RoomMember.user_id == target_user.id).first()
+    res_member = await db.execute(select(RoomMember).filter(RoomMember.room_id == room_uid, RoomMember.user_id == target_user.id))
+    existing = res_member.scalars().first()
     if existing:
         raise HTTPException(status_code=400, detail="User already invited or joined")
         
@@ -105,48 +112,51 @@ def invite_user(
         permissions=invite.permissions
     )
     db.add(new_member)
-    db.commit()
+    await db.commit()
     
     return {"message": f"Invitation sent to {invite.username}"}
 
 @router.post("/{room_id}/join")
-def join_room(room_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def join_room(room_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
         room_uid = uuid.UUID(room_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid Room ID format")
 
-    member = db.query(RoomMember).filter(
+    res_member = await db.execute(select(RoomMember).filter(
         RoomMember.room_id == room_uid, 
         RoomMember.user_id == current_user.id,
         RoomMember.status == RoomMemberStatus.INVITED
-    ).first()
+    ))
+    member = res_member.scalars().first()
     
     if not member:
         # Check if they are owner? Owner doesn't need to join.
-        room = db.query(Room).filter(Room.id == room_uid).first()
+        res_room = await db.execute(select(Room).filter(Room.id == room_uid))
+        room = res_room.scalars().first()
         if room and room.owner_id == current_user.id:
              return {"message": "You are the owner of this room"}
         raise HTTPException(status_code=400, detail="No pending invitation found for this room")
         
     member.status = RoomMemberStatus.JOINED
-    db.commit()
+    await db.commit()
     
     return {"message": "You have joined the room"}
 
 @router.put("/{room_id}/status")
-def update_room_status(
+async def update_room_status(
     room_id: str, 
     is_online: bool, 
     current_user: User = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         room_uid = uuid.UUID(room_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid Room ID format")
 
-    room = db.query(Room).filter(Room.id == room_uid).first()
+    res_room = await db.execute(select(Room).filter(Room.id == room_uid))
+    room = res_room.scalars().first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
         
@@ -154,22 +164,23 @@ def update_room_status(
         raise HTTPException(status_code=403, detail="Only the room OWNER can change status")
         
     room.is_online = is_online
-    db.commit()
+    await db.commit()
     
     return {"status": "updated", "is_online": is_online}
 
 @router.delete("/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_room(
+async def delete_room(
     room_id: str, 
     current_user: User = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         room_uid = uuid.UUID(room_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid Room ID format")
 
-    room = db.query(Room).filter(Room.id == room_uid).first()
+    res_room = await db.execute(select(Room).filter(Room.id == room_uid))
+    room = res_room.scalars().first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
         
@@ -177,7 +188,9 @@ def delete_room(
         raise HTTPException(status_code=403, detail="Only the room OWNER can delete it")
 
     # Cascade delete members (if not handled by DB FK)
-    db.query(RoomMember).filter(RoomMember.room_id == room_uid).delete()
-    db.delete(room)
-    db.commit()
+    members = await db.execute(select(RoomMember).filter(RoomMember.room_id == room_uid))
+    for mem in members.scalars().all():
+        await db.delete(mem)
+    await db.delete(room)
+    await db.commit()
     return None
