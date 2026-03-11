@@ -1,0 +1,134 @@
+[
+  {
+    "route": "/auth/register",
+    "method": "POST",
+    "description": "Registers a new user account.",
+    "schema": {
+      "type": "UserCreate",
+      "fields": {
+        "username": "string",
+        "password": "string",
+        "role": "string (ADMIN | STAFF | STUDENT) - defaults to STUDENT"
+      }
+    },
+    "frontend_caller": "Unknown (Likely Auth page component, possibly hardcoded in a page since it's missing from `frontend/src/api/client.ts` helpers)"
+  },
+  {
+    "route": "/auth/login",
+    "method": "POST",
+    "description": "Authenticates a user and returns an access token.",
+    "schema": {
+      "type": "UserCreate",
+      "fields": {
+        "username": "string",
+        "password": "string"
+      }
+    },
+    "response": "Token (access_token, token_type, role)",
+    "frontend_caller": "Frontend Login Flow (Token set in localStorage via interceptor logic)"
+  },
+  {
+    "route": "/assets/test-s3",
+    "method": "GET",
+    "description": "Tests the connection to the MinIO object storage. (Debug)"
+  },
+  {
+    "route": "/assets/upload",
+    "method": "POST",
+    "description": "Upload a file to the processing pipeline (models/videos/images/slides).",
+    "schema": {
+      "type": "FormData",
+      "fields": {
+        "file": "UploadFile",
+        "asset_type": "string (MODEL | VIDEO | SLIDE | IMAGE)",
+        "is_sliceable": "boolean"
+      }
+    },
+    "frontend_caller": "Frontend Upload Manager Component"
+  },
+  {
+    "route": "/assets/",
+    "method": "GET",
+    "description": "List all uploaded/processed assets belonging to the user.",
+    "query_params": {
+      "asset_type": "Optional[AssetType]"
+    },
+    "response": "List[AssetResponse]",
+    "frontend_caller": "Frontend Assets Listing / Dashboard"
+  },
+  {
+    "route": "/assets/{asset_id}",
+    "method": "GET",
+    "description": "Get detailed info and presigned URL for a specific asset.",
+    "response": "AssetResponse"
+  },
+  {
+    "route": "/assets/{asset_id}",
+    "method": "DELETE",
+    "description": "Removes an asset from database and deletes original/processed files from S3."
+  },
+  {
+    "route": "/rooms/",
+    "method": "POST",
+    "description": "Create a new VR Room (Staff only).",
+    "schema": {
+      "type": "RoomCreate",
+      "fields": {
+        "name": "string",
+        "description": "Optional[string]",
+        "is_online": "boolean",
+        "max_participants": "integer (Default 20)"
+      }
+    },
+    "response": "RoomResponse",
+    "frontend_caller": "`createRoom` in frontend/src/api/rooms.ts"
+  },
+  {
+    "route": "/rooms/",
+    "method": "GET",
+    "description": "List all rooms a user owns or has joined.",
+    "response": "List[RoomResponse]",
+    "frontend_caller": "`getRooms` in frontend/src/api/rooms.ts"
+  },
+  {
+    "route": "/rooms/invitations",
+    "method": "GET",
+    "description": "List all pending room invitations for the current user.",
+    "response": "List[InvitationResponse]",
+    "frontend_caller": "`getInvitations` in frontend/src/api/rooms.ts"
+  },
+  {
+    "route": "/rooms/{room_id}/invite",
+    "method": "POST",
+    "description": "Room owner invites another user.",
+    "schema": {
+      "type": "InviteCreate",
+      "fields": {
+        "username": "string",
+        "permissions": "Dict[str, bool]"
+      }
+    },
+    "frontend_caller": "`inviteUser` in frontend/src/api/rooms.ts"
+  },
+  {
+    "route": "/rooms/{room_id}/join",
+    "method": "POST",
+    "description": "Accept an invitation to join a room.",
+    "frontend_caller": "`joinRoom` in frontend/src/api/rooms.ts"
+  },
+  {
+    "route": "/rooms/{room_id}/status",
+    "method": "PUT",
+    "description": "Toggle room online/offline status (Owner only).",
+    "query_params": {
+      "is_online": "boolean"
+    },
+    "frontend_caller": "`updateRoomStatus` in frontend/src/api/rooms.ts"
+  },
+  {
+    "route": "/rooms/{room_id}",
+    "method": "DELETE",
+    "description": "Delete a room and cascade delete its members (Owner only).",
+    "frontend_caller": "`deleteRoom` in frontend/src/api/rooms.ts"
+  }
+]

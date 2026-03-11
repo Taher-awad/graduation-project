@@ -589,17 +589,34 @@ def fix_transparency():
                 mat.use_backface_culling = False
 
 
-def validate_model():
+def validate_model(is_sliceable):
     """
     Performs extensive checks on the scene data.
     Raises SystemExit(1) if Critical Errors are found.
     """
     import json
     import math
+    import bmesh
     
     errors = []
     
     print("--- DEBUG: RUNNING VALIDATION ---")
+    
+    # Manifold check for sliceable models
+    if is_sliceable:
+        print("--- DEBUG: CHECKING MANIFOLD EDGES ---")
+        non_manifold_count = 0
+        for obj in bpy.data.objects:
+            if obj.type == 'MESH':
+                bm = bmesh.new()
+                bm.from_mesh(obj.data)
+                for e in bm.edges:
+                    if not e.is_manifold:
+                        non_manifold_count += 1
+                bm.free()
+        print(f"DEBUG: Found {non_manifold_count} non-manifold edges.")
+        if non_manifold_count > 0:
+             print(f"WARNING: Mesh has {non_manifold_count} non-manifold edges, slicing may fail or produce artifacts.")
     
     # 1. Texture Check
     # We check if referenced images actually exist on disk (unless packed)
@@ -643,6 +660,22 @@ def validate_model():
     else:
         print("--- DEBUG: VALIDATION PASSED ---")
 
+def optimize_textures():
+    print("--- DEBUG: OPTIMIZING TEXTURES (Max 2048x2048) ---")
+    max_size = 2048
+    for img in bpy.data.images:
+        if img.source == 'FILE' and img.has_data:
+            width, height = img.size[0], img.size[1]
+            if width > max_size or height > max_size:
+                scale = max_size / max(width, height)
+                new_w = max(1, int(width * scale))
+                new_h = max(1, int(height * scale))
+                print(f"Rescaling '{img.name}' from {width}x{height} to {new_w}x{new_h}")
+                try:
+                    img.scale(new_w, new_h)
+                except Exception as e:
+                    print(f"Failed to rescale {img.name}: {e}")
+
 def export_model(output_path):
     print("--- DEBUG: EXPORTING (VANILLA) ---")
     # Ensure export_extras is True
@@ -685,7 +718,8 @@ if __name__ == "__main__":
         reset_scene()
         import_model(parsed_args.input)
         normalize_model(is_sliceable, parsed_args.id)
-        validate_model()
+        validate_model(is_sliceable)
+        optimize_textures()
         export_model(parsed_args.output)
         print("Blender Processing Complete.")
 
