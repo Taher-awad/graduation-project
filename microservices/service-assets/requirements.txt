@@ -1,13 +1,11 @@
 fastapi
 uvicorn
+gunicorn
 sqlalchemy
 asyncpg
 psycopg2-binary
-celery[redis]
-python-multipart
 python-jose[cryptography]
 passlib
-bcrypt==3.2.2
+celery[redis]
+python-multipart
 boto3
-requests
-redis>=4.5.1

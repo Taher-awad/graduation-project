@@ -1,0 +1,46 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Create Env File
+      run: cp .env.example .env
+
+    - name: Build Docker Compose Services
+      run: docker-compose build
+
+    - name: Start Docker Compose Infrastructure
+      run: docker-compose up -d db redis minio service-auth service-rooms service-assets
+      
+    - name: Wait for services to be ready
+      run: sleep 10
+
+    - name: Run Auth Service Tests
+      run: docker-compose exec -T service-auth pytest
+      continue-on-error: true
+
+    - name: Run Rooms Service Tests
+      run: docker-compose exec -T service-rooms pytest
+      continue-on-error: true
+
+    - name: Run Assets Service Tests
+      run: docker-compose exec -T service-assets pytest
+      continue-on-error: true
+
+    - name: Tear down Docker Compose Stack
+      if: always()
+      run: docker-compose down

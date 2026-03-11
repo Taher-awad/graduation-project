@@ -5,26 +5,18 @@ import uuid
 import boto3
 from botocore.client import Config
 import os
+from celery import Celery
 
-from database import get_db
-from models import Asset, User, AssetStatus, AssetType, UserRole
-from dependencies import get_current_user
-from schemas import AssetResponse
-
-from worker import process_asset
+from shared.database import get_db
+from shared.models import Asset, User, AssetStatus, AssetType, UserRole
+from shared.dependencies import get_current_user
+from shared.schemas import AssetResponse
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
-# MinIO Client Setup
-# ... (existing setup)
-
-@router.get("/test-s3")
-def test_s3_connection():
-    try:
-        response = s3.list_buckets()
-        return {"status": "ok", "buckets": response.get('Buckets')}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
+# Configure Celery Client (Decoupled from actual worker code)
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+celery_app = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
 
 # MinIO Client Setup
 s3 = boto3.client('s3',
@@ -34,18 +26,17 @@ s3 = boto3.client('s3',
                     config=Config(signature_version='s3v4'),
                     region_name='us-east-1')
 
-# Public S3 Client (For generating browser-accessible URLs with correct signature)
-# We use localhost:9000 so the signature matches what the browser requests.
+# Public S3 Client (For generating browser-accessible URLs)
 s3_signer = boto3.client('s3',
                     endpoint_url=os.getenv("MINIO_EXTERNAL_ENDPOINT", "http://localhost:9000"),
                     aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
                     aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
-                    config=Config(signature_version='s3v4'),
+                    config=Config(signature_version='s3v4', s3={'addressing_style': 'path'}),
                     region_name='us-east-1')
 
 BUCKET_NAME = os.getenv("MINIO_BUCKET", "assets")
 
-# Ensure bucket exists (simplified for dev)
+# Ensure bucket exists
 try:
     s3.head_bucket(Bucket=BUCKET_NAME)
 except:
@@ -75,7 +66,7 @@ async def upload_asset(
     elif asset_type == AssetType.VIDEO:
         ALLOWED = {'mp4', 'mov', 'avi'}
     elif asset_type == AssetType.SLIDE:
-        ALLOWED = {'pdf', 'pptx', 'png', 'jpg'} # Slides can be images too, but kept separate for logic
+        ALLOWED = {'pdf', 'pptx', 'png', 'jpg'} 
     elif asset_type == AssetType.IMAGE:
         ALLOWED = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
     else:
@@ -101,10 +92,8 @@ async def upload_asset(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"S3 Upload Failed: {str(e)}")
     
-    # Determine Initial Status
-    # Models need processing. Videos/Slides are done (or just stored).
     initial_status = AssetStatus.PENDING if asset_type == AssetType.MODEL else AssetStatus.COMPLETED
-    processed_path = s3_key if asset_type != AssetType.MODEL else None # For non-models, raw IS the processed
+    processed_path = s3_key if asset_type != AssetType.MODEL else None
 
     # Create DB Entry
     new_asset = Asset(
@@ -121,9 +110,9 @@ async def upload_asset(
     db.commit()
     db.refresh(new_asset)
     
-    # Trigger Celery Task ONLY for Models
+    # Decentralized Task Trigger: Send to Redis directly without importing the heavy worker
     if asset_type == AssetType.MODEL:
-        task = process_asset.delay(str(asset_id))
+        celery_app.send_task("worker.process_asset", args=[str(asset_id)])
     
     return {"id": str(new_asset.id), "status": new_asset.status, "type": new_asset.asset_type}
 
@@ -138,7 +127,7 @@ def list_assets(
         query = query.filter(Asset.asset_type == asset_type)
         
     assets = query.all()
-    # Generate URLs for all assets
+    # Generate URLs
     for asset in assets:
         if asset.status == AssetStatus.COMPLETED and asset.processed_path:
             try:
@@ -153,11 +142,11 @@ def list_assets(
 
 @router.get("/{asset_id}", response_model=AssetResponse)
 def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Try uuid parsing so it matches db schema strictness if needed, though postgres usually handles string uuids
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.owner_id == current_user.id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     
-    # Generate Presigned URL
     download_url = None
     if asset.status == AssetStatus.COMPLETED and asset.processed_path:
         try:
@@ -168,12 +157,7 @@ def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db:
         except Exception as e:
             print(f"Error generating url: {e}")
             
-    # For Schema response, we attach the url manually (since it's not in DB)
-    # But Pydantic 'orm_mode' usually grabs DB fields. We need to construct response or use a helper.
-    # Actually, returning the ORM object works if the Pydantic model has matching fields.
-    # But 'download_url' is computed. We should set it on the object or return a dict.
-    
-    asset.download_url = download_url # Monkey-patch for Pydantic (works usually)
+    asset.download_url = download_url
     return asset
 
 @router.delete("/{asset_id}", status_code=204)
@@ -182,8 +166,6 @@ def delete_asset(asset_id: str, current_user: User = Depends(get_current_user), 
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    # Delete from S3
-    # We need to delete both original and processed paths if they exist
     paths_to_delete = []
     if asset.original_path:
         paths_to_delete.append(asset.original_path)
@@ -196,7 +178,6 @@ def delete_asset(asset_id: str, current_user: User = Depends(get_current_user), 
         except Exception as e:
             print(f"Failed to delete S3 object {path}: {e}")
 
-    # Delete from DB
     db.delete(asset)
     db.commit()
     return None

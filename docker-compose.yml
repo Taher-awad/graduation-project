@@ -5,39 +5,84 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: cortex_api
+    container_name: cortex_api_monolith
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/cortex_db
-      - REDIS_URL=redis://redis:6379/0
-      - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - MINIO_BUCKET=assets
+    # Removed ports directive since the Gateway handles inbound traffic now
+    env_file:
+      - .env
     depends_on:
       - db
       - redis
       - minio
 
-  worker:
+  service-auth:
     build:
-      context: ./backend
+      context: ./microservices
+      dockerfile: service-auth/Dockerfile
+    container_name: cortex_service_auth
+    env_file:
+      - .env
+    depends_on:
+      - db
+
+  service-rooms:
+    build:
+      context: ./microservices
+      dockerfile: service-rooms/Dockerfile
+    container_name: cortex_service_rooms
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - service-auth
+
+  service-assets:
+    build:
+      context: ./microservices
+      dockerfile: service-assets/Dockerfile
+    container_name: cortex_service_assets
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+      - minio
+      - service-auth
+
+  service-notifications:
+    build:
+      context: ./microservices
+      dockerfile: service-notifications/Dockerfile
+    container_name: cortex_service_notifications
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  api-gateway:
+    build:
+      context: ./api-gateway
       dockerfile: Dockerfile
-    container_name: cortex_worker
-    command: celery -A worker.celery_app worker --loglevel=info
-    volumes:
-      - ./backend:/app
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/cortex_db
-      - REDIS_URL=redis://redis:6379/0
-      - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - MINIO_BUCKET=assets
+    container_name: cortex_api_gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      - api
+      - service-auth
+      - service-rooms
+      - service-assets
+      - service-notifications
+
+  service-3d-worker:
+    build:
+      context: ./microservices
+      dockerfile: service-3d-worker/Dockerfile
+    container_name: cortex_service_3d_worker
+    command: celery -A celery_app worker --loglevel=info --concurrency=2
+    env_file:
+      - .env
     depends_on:
       - db
       - redis
@@ -46,10 +91,8 @@ services:
   db:
     image: postgres:15
     container_name: cortex_db
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=cortex_db
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     volumes:
@@ -68,11 +111,25 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+    env_file:
+      - .env
     volumes:
       - minio_data:/data
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cortex_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    env_file:
+      - .env
+    depends_on:
+      - api
 
 volumes:
   postgres_data:

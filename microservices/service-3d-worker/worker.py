@@ -6,11 +6,25 @@ import json
 import boto3
 from botocore.client import Config
 from sqlalchemy.orm import Session
-from database import SessionLocal
-from models import Asset, AssetStatus
+from shared.database import SessionLocal
+from shared.models import Asset, AssetStatus
 from celery_app import celery_app
 import optimize
 from utils_worker import find_main_model_file
+import redis
+
+# Redis Configuration for Pub/Sub SSE
+redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+
+def broadcast_status(user_id: str, asset_id: str, status: str, extra: dict = None):
+    channel = f"user_notifications:{user_id}"
+    message = {
+        "asset_id": asset_id,
+        "status": status,
+    }
+    if extra:
+        message.update(extra)
+    redis_client.publish(channel, json.dumps(message))
 
 # Debugging Paths
 import sys
@@ -38,6 +52,9 @@ def process_asset(self, asset_id: str):
         # Update Status
         asset.status = AssetStatus.PROCESSING
         db.commit()
+        
+        # Publish STARTED Event
+        broadcast_status(str(asset.owner_id), asset_id, "PROCESSING", {"message": "Beginning extraction and geometry normalization."})
 
         # Paths
         work_dir = f"/tmp/{asset_id}"
@@ -50,6 +67,7 @@ def process_asset(self, asset_id: str):
 
         # 1. Download from S3
         print(f"Downloading {asset.original_path}...")
+        broadcast_status(str(asset.owner_id), asset_id, "PROCESSING", {"message": "Downloading model from storage..."})
         s3.download_file(BUCKET_NAME, asset.original_path, local_input_path)
 
         # Logic for Zip Files
@@ -58,6 +76,7 @@ def process_asset(self, asset_id: str):
 
         if input_filename.lower().endswith('.zip'):
             print("Detected ZIP file. Extracting...")
+            broadcast_status(str(asset.owner_id), asset_id, "PROCESSING", {"message": "Extracting archive contents..."})
             import zipfile
             
             extract_dir = os.path.join(work_dir, "extracted")
@@ -109,6 +128,7 @@ def process_asset(self, asset_id: str):
 
         # 2. Blender Processing (Import -> Normalize -> Export GLB)
         print("Running Blender...")
+        broadcast_status(str(asset.owner_id), asset_id, "PROCESSING", {"message": "Optimizing geometry and generating textures..."})
         blender_cmd = [
             "blender",
             "-b", # Background
@@ -151,6 +171,7 @@ def process_asset(self, asset_id: str):
         shutil.copy(mid_glb_path, final_glb_path)
 
         # 4. Upload Result
+        broadcast_status(str(asset.owner_id), asset_id, "PROCESSING", {"message": "Uploading optimized model to storage..."})
         processed_key = f"processed/{asset_id}.glb"
         s3.upload_file(final_glb_path, BUCKET_NAME, processed_key)
 
@@ -164,6 +185,9 @@ def process_asset(self, asset_id: str):
         }
         db.commit()
 
+        # Publish COMPLETED Event
+        broadcast_status(str(asset.owner_id), asset_id, "COMPLETED", {"processed_url": processed_key, "message": "Optimization and baking finished successfully!"})
+
         # Cleanup
         shutil.rmtree(work_dir)
         return "Success"
@@ -173,6 +197,10 @@ def process_asset(self, asset_id: str):
         asset.status = AssetStatus.FAILED
         asset.metadata_json = {"error": str(e)}
         db.commit()
+        
+        # Publish FAILED Event
+        broadcast_status(str(asset.owner_id), asset_id, "FAILED", {"error": str(e)})
+        
         # Cleanup
         if os.path.exists(f"/tmp/{asset_id}"):
             shutil.rmtree(f"/tmp/{asset_id}")

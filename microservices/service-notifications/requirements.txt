@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+gunicorn
+sse-starlette
+redis>=4.5.1

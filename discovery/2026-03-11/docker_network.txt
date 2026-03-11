@@ -1,0 +1,39 @@
+Docker Network Architecture (`docker-compose.yml`)
+
+1. cortex_api (Backend)
+   - Alias: `api`
+   - Port: Exposes 8000 to the host (`8000:8000`)
+   - Dependencies: `db`, `redis`, `minio`
+   - External Network: Accessible to host at `http://localhost:8000`
+
+2. cortex_worker (Celery Worker)
+   - Alias: `worker`
+   - Role: Background task processing (3D asset optimization using Blender headless).
+   - Dependencies: `db`, `redis`, `minio`
+   - Port: No exposed host ports (Internal only)
+
+3. cortex_db (Database)
+   - Alias: `db`
+   - Image: `postgres:15`
+   - Port: Exposes 5432 to the host (`5432:5432`)
+   - Alias resolution: `postgresql://postgres:<password>@db:5432/cortex_db`
+
+4. cortex_redis (Message Broker)
+   - Alias: `redis`
+   - Image: `redis:7`
+   - Port: Exposed internally on default port 6379 (Host port binding is commented out).
+   - Alias resolution: `redis://redis:6379/0`
+
+5. cortex_minio (Object Storage)
+   - Alias: `minio`
+   - Port: Exposes 9000 (API) and 9001 (Console) to host.
+   - Alias resolution: `http://minio:9000` internally, `http://localhost:9000` from the host browser.
+
+Network Inter-Dependencies Flow:
+- Frontend (Browser on Host) --> `http://localhost:8000` (FastAPI) [Cross-origin outside compose network]
+- FastAPI --> `db:5432` (Query PostgreSQL layer)
+- FastAPI --> `minio:9000` (Directly write raw files to S3 bucket)
+- FastAPI --> `redis:6379` (Push Celery task queue message)
+- Celery Worker --> `redis:6379` (Subscribe & Poll tasks from queue)
+- Celery Worker --> `minio:9000` (Download raw model files & upload processed GLB files)
+- Celery Worker --> `db:5432` (Update asset statuses / tracking)
