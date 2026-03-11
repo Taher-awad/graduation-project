@@ -21,26 +21,26 @@ jobs:
       run: cp .env.example .env
 
     - name: Build Docker Compose Services
-      run: docker-compose build
+      run: docker compose build
 
     - name: Start Docker Compose Infrastructure
-      run: docker-compose up -d db redis minio service-auth service-rooms service-assets
+      run: docker compose up -d db redis minio service-auth service-rooms service-assets
       
     - name: Wait for services to be ready
       run: sleep 10
 
     - name: Run Auth Service Tests
-      run: docker-compose exec -T service-auth pytest
+      run: docker compose exec -T service-auth pytest
       continue-on-error: true
 
     - name: Run Rooms Service Tests
-      run: docker-compose exec -T service-rooms pytest
+      run: docker compose exec -T service-rooms pytest
       continue-on-error: true
 
     - name: Run Assets Service Tests
-      run: docker-compose exec -T service-assets pytest
+      run: docker compose exec -T service-assets pytest
       continue-on-error: true
 
     - name: Tear down Docker Compose Stack
       if: always()
-      run: docker-compose down
+      run: docker compose down
