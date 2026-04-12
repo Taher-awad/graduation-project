@@ -12,7 +12,7 @@ BASE_URL = os.getenv("API_URL", "http://localhost:8000")
 state = {
     "staff_token": None,
     "student_token": None,
-    "asset_id": None,
+    "asset_ids": [],
     "room_id": None
 }
 
@@ -70,51 +70,57 @@ def e2e_test():
     # ==========================================
     logging.info("\n--- PHASE 2: ASSETS & MINIO/CELERY ---")
     
-    # Define a target test file
-    test_file_path = "3d models for test/Duck.glb"
-    has_test_file = os.path.exists(test_file_path)
-    if not has_test_file:
-         logging.warning(f"Unable to find {test_file_path}. Skipping actual upload test.")
+    model_names = os.getenv("E2E_TEST_MODELS", "Duck.glb,DamagedHelmet.glb")
+    test_models = [name.strip() for name in model_names.split(",") if name.strip()]
+    existing_model_paths = [f"3d models for test/{name}" for name in test_models if os.path.exists(f"3d models for test/{name}")]
+
+    if not existing_model_paths:
+         logging.warning(f"Unable to find any configured test models ({test_models}). Skipping actual upload test.")
     else:
+        primary_test_file = existing_model_paths[0]
+
         # 2a. Student Upload Attempt (Negative/RBAC)
-        with open(test_file_path, "rb") as f:
-            files = {"file": ("Duck.glb", f, "model/gltf-binary")}
+        with open(primary_test_file, "rb") as f:
+            files = {"file": (os.path.basename(primary_test_file), f, "model/gltf-binary")}
             data = {"asset_type": "MODEL", "is_sliceable": "False"}
             r = requests.post(f"{BASE_URL}/assets/upload", files=files, data=data, headers=student_headers)
             assert_status(r, 403, "Student Upload Rejection (RBAC)")
         
         # 2b. Bad Extension Upload Attempt (Negative)
-        with open(test_file_path, "rb") as f:
-            files = {"file": ("Duck.txt", f, "text/plain")}
+        with open(primary_test_file, "rb") as f:
+            files = {"file": ("BadModel.txt", f, "text/plain")}
             data = {"asset_type": "MODEL", "is_sliceable": "False"}
             r = requests.post(f"{BASE_URL}/assets/upload", files=files, data=data, headers=staff_headers)
             assert_status(r, 400, "Invalid File Extension Rejection")
+
+        for test_file_path in existing_model_paths:
+            file_name = os.path.basename(test_file_path)
+
+            # 2c. Successful Staff Upload
+            with open(test_file_path, "rb") as f:
+                files = {"file": (file_name, f, "model/gltf-binary")}
+                data = {"asset_type": "MODEL", "is_sliceable": "False"}
+                r = requests.post(f"{BASE_URL}/assets/upload", files=files, data=data, headers=staff_headers)
+                assert_status(r, 200, f"Staff Asset Upload ({file_name})")
+                asset_id = r.json().get("id")
+                state["asset_ids"].append(asset_id)
             
-        # 2c. Successful Staff Upload
-        with open(test_file_path, "rb") as f:
-            files = {"file": ("Duck.glb", f, "model/gltf-binary")}
-            data = {"asset_type": "MODEL", "is_sliceable": "False"}
-            r = requests.post(f"{BASE_URL}/assets/upload", files=files, data=data, headers=staff_headers)
-            assert_status(r, 200, "Staff Asset Upload")
-            state["asset_id"] = r.json().get("id")
-            
-        # 2d. Polling Asset Status (Celery 3D worker verification)
-        logging.info("Waiting for Celery worker to process the 3D asset (max 30s)...")
-        max_retries = 15
-        for i in range(max_retries):
-            r = requests.get(f"{BASE_URL}/assets/{state['asset_id']}", headers=staff_headers)
-            assert_status(r, 200, f"Poll Asset Status Check {i+1}")
-            asset_data = r.json()
-            if asset_data["status"] == "COMPLETED":
-                logging.info("Asset Processing COMPLETED successfully!")
-                if not asset_data.get("download_url"):
-                    logging.error("No Presigned Download URL generated!")
-                else:
-                    logging.info(f"Presigned URL Acquired.")
-                break
-            time.sleep(2)
-        else:
-            logging.warning("Asset Processing timed out during E2E test. Is celery worker running?")
+            # 2d. Polling Asset Status (Celery 3D worker verification)
+            logging.info(f"Waiting for Celery worker to process {file_name} (max 80s)...")
+            max_retries = 40
+            for i in range(max_retries):
+                r = requests.get(f"{BASE_URL}/assets/{asset_id}", headers=staff_headers)
+                assert_status(r, 200, f"Poll Asset Status Check {i+1} ({file_name})")
+                asset_data = r.json()
+                if asset_data["status"] == "COMPLETED":
+                    logging.info(f"Asset Processing COMPLETED successfully for {file_name}.")
+                    assert asset_data.get("download_url"), f"No Presigned Download URL generated for {file_name}"
+                    break
+                if asset_data["status"] == "FAILED":
+                    raise AssertionError(f"Asset Processing FAILED for {file_name}: {asset_data.get('metadata_json')}")
+                time.sleep(2)
+            else:
+                raise AssertionError(f"Asset Processing timed out for {file_name}. Is celery worker running?")
 
     # ==========================================
     # 3. ROOMS & COLLABORATION
@@ -198,17 +204,20 @@ def e2e_test():
         logging.info("Teardown: Cascade (Room Memberships removed) Verified.")
 
     # 5b. Delete Asset
-    if state["asset_id"]:
-        r = requests.delete(f"{BASE_URL}/assets/{state['asset_id']}", headers=staff_headers)
-        assert_status(r, 204, "Teardown: Asset S3/DB Deletion")
+    for asset_id in state["asset_ids"]:
+        r = requests.delete(f"{BASE_URL}/assets/{asset_id}", headers=staff_headers)
+        assert_status(r, 204, f"Teardown: Asset S3/DB Deletion ({asset_id})")
 
     logging.info("\n--- E2E ENTIRE SUITE PASSED EXCELLENTLY ---")
 
 
 if __name__ == "__main__":
+    import sys
     try:
         e2e_test()
     except requests.exceptions.ConnectionError:
         logging.error("FATAL: Could not connect to API Gateway. Is Docker running?")
+        sys.exit(1)
     except AssertionError:
          logging.error("FATAL: Test Suite Aborted due to Assertion Failure.")
+         sys.exit(1)

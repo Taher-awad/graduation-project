@@ -17,3 +17,4 @@ backend/.pytest_cache/
 .idea/
 3d models for test/
 old.zip
+*.db
