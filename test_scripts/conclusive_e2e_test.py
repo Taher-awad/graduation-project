@@ -212,9 +212,12 @@ def e2e_test():
 
 
 if __name__ == "__main__":
+    import sys
     try:
         e2e_test()
     except requests.exceptions.ConnectionError:
         logging.error("FATAL: Could not connect to API Gateway. Is Docker running?")
+        sys.exit(1)
     except AssertionError:
          logging.error("FATAL: Test Suite Aborted due to Assertion Failure.")
+         sys.exit(1)

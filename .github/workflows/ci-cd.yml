@@ -96,17 +96,30 @@ jobs:
         run: |
           cp /home/runner/work/graduation-project/graduation-project/.env.example /home/runner/work/graduation-project/graduation-project/.env
           echo "SECRET_KEY=ci_secret_key_for_testing_only" >> /home/runner/work/graduation-project/graduation-project/.env
+          {
+            echo "MINIO_ACCESS_KEY=ci_minio_user"
+            echo "MINIO_SECRET_KEY=ci_minio_password"
+            echo "MINIO_ROOT_USER=ci_minio_user"
+            echo "MINIO_ROOT_PASSWORD=ci_minio_password"
+          } >> /home/runner/work/graduation-project/graduation-project/.env
 
-      - name: Start stack
-        run: docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d --build
+      - name: Start infrastructure and services in dependency order
+        run: |
+          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d --build db redis minio
+          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d service-auth
+          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d service-rooms service-assets service-notifications service-3d-worker
+          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d api-gateway
 
-      - name: Wait for API gateway
+      - name: Wait for API gateway to become ready
         run: |
           for i in {1..90}; do
             code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8000/auth/login" -H "Content-Type: application/json" -d '{"username":"healthcheck","password":"healthcheck","role":"STUDENT"}' || true)
             if [ "$code" = "401" ] || [ "$code" = "422" ]; then
               echo "API is ready (status $code)."
               exit 0
+            fi
+            if [ $((i % 10)) -eq 0 ]; then
+              docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d service-auth api-gateway
             fi
             sleep 2
           done
