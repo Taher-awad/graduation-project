@@ -11,13 +11,16 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   frontend-build:
     name: Frontend lint and build
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: /home/runner/work/graduation-project/graduation-project/frontend
+        working-directory: ${{ github.workspace }}/frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,7 +30,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: /home/runner/work/graduation-project/graduation-project/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -45,19 +48,17 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
+        service: ["service-auth", "service-assets", "service-rooms"]
         include:
           - service: service-auth
-            requirements: microservices/service-auth/requirements.txt
             test_file: tests/test_auth.py
           - service: service-assets
-            requirements: microservices/service-assets/requirements.txt
             test_file: tests/test_assets.py
           - service: service-rooms
-            requirements: microservices/service-rooms/requirements.txt
             test_file: tests/test_rooms.py
     defaults:
       run:
-        working-directory: /home/runner/work/graduation-project/graduation-project/microservices/${{ matrix.service }}
+        working-directory: ${{ github.workspace }}/microservices/${{ matrix.service }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,11 +72,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest httpx
-          python -m pip install -r /home/runner/work/graduation-project/graduation-project/${{ matrix.requirements }}
+          python -m pip install -r ${{ github.workspace }}/microservices/${{ matrix.service }}/requirements.txt
 
       - name: Run tests
         env:
-          PYTHONPATH: /home/runner/work/graduation-project/graduation-project/microservices
+          PYTHONPATH: ${{ github.workspace }}/microservices
         run: pytest -q ${{ matrix.test_file }}
 
   pipeline-e2e:
@@ -87,28 +88,28 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
-        working-directory: /home/runner/work/graduation-project/graduation-project
+        working-directory: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Prepare environment file
         run: |
-          cp /home/runner/work/graduation-project/graduation-project/.env.example /home/runner/work/graduation-project/graduation-project/.env
-          echo "SECRET_KEY=ci_secret_key_for_testing_only" >> /home/runner/work/graduation-project/graduation-project/.env
+          cp ${{ github.workspace }}/.env.example ${{ github.workspace }}/.env
+          echo "SECRET_KEY=ci_secret_key_for_testing_only" >> ${{ github.workspace }}/.env
           {
             echo "MINIO_ACCESS_KEY=ci_minio_user"
             echo "MINIO_SECRET_KEY=ci_minio_password"
             echo "MINIO_ROOT_USER=ci_minio_user"
             echo "MINIO_ROOT_PASSWORD=ci_minio_password"
-          } >> /home/runner/work/graduation-project/graduation-project/.env
+          } >> ${{ github.workspace }}/.env
 
       - name: Start infrastructure and services in dependency order
         run: |
-          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d --build db redis minio
-          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d service-auth
-          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d service-rooms service-assets service-notifications service-3d-worker
-          docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d api-gateway
+          docker compose -f ${{ github.workspace }}/docker-compose.yml up -d --build db redis minio
+          docker compose -f ${{ github.workspace }}/docker-compose.yml up -d service-auth
+          docker compose -f ${{ github.workspace }}/docker-compose.yml up -d service-rooms service-assets service-notifications service-3d-worker
+          docker compose -f ${{ github.workspace }}/docker-compose.yml up -d api-gateway
 
       - name: Wait for API gateway to become ready
         run: |
@@ -119,7 +120,7 @@ jobs:
               exit 0
             fi
             if [ $((i % 10)) -eq 0 ]; then
-              docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d service-auth api-gateway
+              docker compose -f ${{ github.workspace }}/docker-compose.yml up -d service-auth api-gateway
             fi
             sleep 2
           done
@@ -133,19 +134,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install requests
-          python /home/runner/work/graduation-project/graduation-project/test_scripts/conclusive_e2e_test.py
+          python ${{ github.workspace }}/test_scripts/conclusive_e2e_test.py
 
       - name: Capture container logs on failure
         if: failure()
-        run: docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml logs --no-color > /home/runner/work/graduation-project/graduation-project/docker-compose-logs.txt
+        run: docker compose -f ${{ github.workspace }}/docker-compose.yml logs --no-color > ${{ github.workspace }}/docker-compose-logs.txt
 
       - name: Upload logs artifact on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: docker-compose-logs
-          path: /home/runner/work/graduation-project/graduation-project/docker-compose-logs.txt
+          path: docker-compose-logs.txt
 
       - name: Tear down stack
         if: always()
-        run: docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml down -v
+        run: docker compose -f ${{ github.workspace }}/docker-compose.yml down -v
