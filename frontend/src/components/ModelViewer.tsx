@@ -22,7 +22,7 @@ export const ModelViewer = ({ url }: { url: string }) => {
     <div className="w-full h-full bg-slate-950 rounded-xl overflow-hidden relative">
       <Canvas shadows dpr={[1, 2]} camera={{ fov: 50 }}>
         <Suspense fallback={null}>
-          <Stage environment="city" intensity={0.5} adjustCamera={true}>
+          <Stage environment="studio" intensity={0.5} adjustCamera={true}>
             <Model url={url} />
           </Stage>
         </Suspense>

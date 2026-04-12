@@ -1,36 +1,64 @@
-# EduVR: AI-Powered Collaborative Virtual Reality Learning Platform
+# EduVR – Cortex AI: Project Overview
 
-## Project Overview
-**EduVR** is a collaborative Virtual Reality (VR) learning platform designed to address the limitations of traditional 2D education by creating an immersive and interactive environment. It is particularly focused on fields requiring high spatial awareness, such as medicine and engineering.
+## What is This?
 
-## Terminology
-- **The Pipeline**: Refers to the entire project ecosystem (API Gateway, Microservices, Frontend, Asset Processing) *excluding* the multiplayer engine.
-- **The Multiplayer Engine**: Refers specifically to the standalone Rust server (`graduation-v1-multiplayer-backend`) and its associated Unity scripts.
+EduVR (internal: Cortex AI) is a graduation project — a full-stack virtual reality education platform that lets teachers upload 3D models and share them with students in virtual collaborative rooms.
 
-## Key Objectives
-- Allow instructors and students to join shared virtual classrooms regardless of physical location.
-- Enable users to explore, dissect, and discuss high-fidelity 3D models in real-time.
-- Modernize laboratory education, enhance collaboration, and improve conceptual retention.
+## Key Technical Decisions
 
-## Current Phase Deliverables
-1. **Educational Content Templates**:
-   - *Anatomy Template*: Immersive environment for medical education using the open-source Z-Anatomy atlas.
-   - *Mathematics Visualization Template*: Interactive environment for visualizing complex mathematical functions and geometric concepts in 3D space.
+| Decision | Choice | Reason |
+|---|---|---|
+| Backend | Python FastAPI microservices | Fast async, auto-docs, easy containerization |
+| Auth | JWT Bearer (HS256, 15min) | Stateless, scales across services |
+| 3D Processing | Blender headless (bpy) | Industry-standard, free, handles FBX/OBJ/BLEND |
+| File Storage | MinIO (S3-compatible) | Self-hosted, no AWS cost, presigned URLs |
+| Task Queue | Celery + Redis | Decouple heavy Blender work from HTTP request |
+| Real-time | Server-Sent Events (SSE) | One-way push, simpler than WebSockets for status |
+| Database | PostgreSQL | Robust, handles UUIDs, JSON columns natively |
+| Reverse Proxy | Nginx | Rate limiting, CORS, SSE buffering config |
+| Frontend | React 19 + TypeScript + Vite | Modern, type-safe, fast HMR |
+| 3D Viewer | React Three Fiber + drei | Three.js in React, component model |
 
-2. **Core Technical Modules**:
-   - *Automated 3D Model Processor*: A robust automated pipeline for ingesting, validating, and optimizing 3D models.
-   - *Asset Management System*: Centralized web interface with Role-Based Access Control (RBAC) to manage the 3D library.
-   - *Collaboration Room Manager*: Subsystem for orchestrating multi-user sessions bridging the web platform and the multiplayer VR environment.
+## Project Structure
 
-## Future Work (Phase 2)
-- **Online Unity System**: Finalizing the robust multi-user networking layer.
-- **AI Builder Assistant**: Tool to assist instructors in creating 3D content effortlessly.
-- **RAG-Powered AI Tutor**: Connecting the AI Tutor interface to the main backend (EduVR Core) for context-aware responses based on educational material.
+```
+graduation v1/
+├── api-gateway/          # Nginx config (reverse proxy)
+├── microservices/
+│   ├── shared/           # Shared ORM models, schemas, auth utils
+│   ├── service-auth/     # Registration, login, JWT
+│   ├── service-rooms/    # Room CRUD, invitations
+│   ├── service-assets/   # Upload, list, delete assets
+│   ├── service-notifications/  # SSE stream
+│   └── service-3d-worker/      # Celery + Blender pipeline
+├── frontend/             # React/Vite app
+├── documentation/        # All docs (you are here)
+├── knowledge/            # Quick reference notes
+├── docker-compose.yml
+└── .env.example
+```
 
-## Project Team (Alamein International University)
-- Taher Awad (21100797)
-- Ahmed Abdo (21100788)
-- Ahmed Wageh (21100842)
-- Ali Yasser Ali (21100801)
-- Mahmoud Abdelhady (22100680)
-- **Supervised by**: Dr. Mahmoud Gamal
+## Roles
+
+| Role | Can Create Rooms | Can Upload Assets | Can Join Rooms |
+|---|---|---|---|
+| TEACHER | ✅ | ✅ | ✅ (as owner) |
+| TA | ✅ | ✅ | ✅ |
+| STUDENT | ❌ | ❌ | ✅ (via invite) |
+
+## Default Dev Users
+
+| Username | Password | Role |
+|---|---|---|
+| `taher` | `123` | TEACHER |
+| `student1` | `123` | STUDENT |
+
+## Quick Start
+
+```bash
+cp .env.example .env
+docker-compose up -d
+# API: http://localhost:8000
+# App: http://localhost:5173
+# MinIO Console: http://localhost:9001
+```

@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from shared.database import engine, Base, SessionLocal
 from shared.models import User, UserRole
 from shared.models import User, UserRole
@@ -48,14 +47,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Cortex AI - Auth Service", lifespan=lifespan)
 
-# Allow Traefik/Nginx Gateway to forward requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is handled exclusively by the Nginx API Gateway
 
 app.include_router(auth_router)
 

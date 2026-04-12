@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
+import axios from 'axios';
 import { Lock, User, Box, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -23,8 +24,23 @@ export const Login = () => {
       login(response.data.access_token);
       navigate('/');
     } catch (err) {
-      const apiErr = err as { response?: { data?: { detail?: string } } };
-      setError(apiErr.response?.data?.detail || 'Failed to login');
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        const detail = err.response?.data?.detail;
+        if (!err.response) {
+          setError('Cannot reach the server. Please check your connection.');
+        } else if (status === 401) {
+          setError('Invalid username or password.');
+        } else if (status === 400) {
+          setError(detail || 'Invalid credentials. Please try again.');
+        } else if (status === 500) {
+          setError('Server error. Please try again later.');
+        } else {
+          setError(detail || 'Login failed. Please try again.');
+        }
+      } else {
+        setError('An unexpected error occurred.');
+      }
     } finally {
       setLoading(false);
     }

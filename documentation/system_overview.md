@@ -1,149 +1,235 @@
-# Cortex AI System: Comprehensive Technical Overview
+# EduVR – Cortex AI Platform: System Overview
 
-## 1. System Introduction
+## Project Identity
 
-**Cortex AI** is a collaborative 3D asset management and visualization platform designed for educational and medical purposes. It allows users (Students and Staff) to upload, process, and view complex 3D models (like anatomical structures) in a web browser or a shared VR environment.
-
-The core philosophy is **"Upload Once, Run Everywhere"**. Any model uploaded to the platform is automatically validated, fixed, and optimized so it works seamlessly in both the Web Viewer (Three.js/React) and the Native Client (Unity/VR).
+| Field | Value |
+|---|---|
+| **Project Name** | EduVR – Cortex AI Platform |
+| **Internal Codename** | Cortex |
+| **Version** | 1.0 (Graduation Project) |
+| **Stack** | Python FastAPI Microservices · React/TypeScript Frontend · PostgreSQL · MinIO · Redis · Nginx API Gateway · Celery · Blender (headless) · Docker |
 
 ---
 
-## 2. Technical Architecture
+## Problem Statement
 
-The system is built as a **Monorepo** containing a Dockerized Microservices architecture.
+Traditional education lacks immersive, interactive 3D environments for complex subject matter (anatomy, engineering, chemistry). EduVR provides a full-stack platform allowing teachers to upload, process, and share 3D models with students inside virtual-reality-ready rooms, with real-time status feedback during processing.
 
-### 2.1 Backend (FastAPI)
+---
 
-- **Role**: The central brain of the operation.
-- **Tech**: Python 3.10, FastAPI, SQLAlchemy.
+## High-Level Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Client (Browser / Unity VR)                                             │
+│  React + TypeScript frontend (Vite, Tailwind, React Three Fiber)        │
+└─────────────────┬────────────────────────────────────────────────────────┘
+                  │ HTTP / SSE  (port 5173 → 8000)
+┌─────────────────▼────────────────────────────────────────────────────────┐
+│  API Gateway  (Nginx, port 8000)                                         │
+│  Routes: /auth/ · /rooms/ · /assets/ · /notifications/                  │
+│  Rate-limiting: 100 req/min per IP · CORS whitelist                      │
+└──┬────────┬──────────┬──────────────┬───────────────────────────────────┘
+   │        │          │              │
+   ▼        ▼          ▼              ▼
+ Auth     Rooms     Assets       Notifications
+ :8000    :8000      :8000          :8000
+ FastAPI  FastAPI    FastAPI        FastAPI (SSE)
+   │        │          │              │
+   └────────┴──────────┴──────────────┘
+                        │
+              ┌─────────┴──────────┐
+              │   Shared Layer      │
+              │  PostgreSQL (5432)  │
+              │  Redis     (6379)  │
+              │  MinIO     (9000)  │
+              └─────────┬──────────┘
+                        │
+              ┌─────────▼──────────┐
+              │  3D Worker Service  │
+              │  Celery + Blender   │
+              │  (Background tasks) │
+              └────────────────────┘
+```
+
+---
+
+## Services
+
+### 1. `service-auth` (Authentication Service)
+- **Framework**: FastAPI (Python)
+- **Port**: 8000 (internal)
 - **Responsibilities**:
-  - **Auth**: Handles JWT generation and Role-Based Access Control (RBAC).
-  - **API**: REST endpoints for Assets and Rooms.
-  - **Orchestration**: Dispatches heavy 3D processing jobs to the worker queue.
-  - **Database Interactions**: Uses SQLAlchemy ORM to manage complex relationships between Users, Rooms, and Assets.
+  - User registration with role assignment (TEACHER / TA / STUDENT)
+  - Password hashing via bcrypt
+  - JWT token issuance (HS256, 15-minute expiry)
+  - Seeds default users at startup (teacher: `taher`, student: `student1`)
+- **Database**: PostgreSQL (shared schema)
+- **Key files**: `auth.py`, `main.py`
 
-### 2.2 Frontend (React)
+### 2. `service-rooms` (Rooms Service)
+- **Framework**: FastAPI (Python)
+- **Port**: 8000 (internal)
+- **Responsibilities**:
+  - Create virtual classroom/lab rooms (Teacher/TA only)
+  - List rooms owned/joined by the current user
+  - Invite users to rooms (owner only)
+  - Accept invitations to join a room
+  - Update room online/offline status (owner only)
+  - Delete rooms (owner only, cascades members)
+- **Database**: PostgreSQL (shared schema)
+- **Key files**: `rooms.py`, `main.py`
 
-- **Role**: The web management portal.
-- **Tech**: React, TypeScript, TailwindCSS.
-- **Key Features**:
-  - **Asset Manager**: Upload, view, and delete 3D models.
-  - **3D Viewer**: A custom Three.js viewer that supports slicing and annotations.
-  - **Room Managment**: Staff can create collaboration rooms and invite students.
+### 3. `service-assets` (Asset Management Service)
+- **Framework**: FastAPI (Python)
+- **Port**: 8000 (internal)
+- **Responsibilities**:
+  - Upload 3D models (GLB/GLTF/FBX/OBJ/BLEND/STL/ZIP), videos (MP4/MOV/AVI), slides (PDF/PPTX/PNG/JPG), images
+  - Store raw files in MinIO object storage
+  - Dispatch Celery background task for MODEL type assets
+  - Generate presigned S3 URLs for downloads
+  - List/get/delete user-owned assets
+- **Storage**: MinIO (`assets` bucket)
+- **Task Queue**: Redis + Celery
+- **Key files**: `assets.py`, `main.py`
 
-### 2.3 Worker (Celery + Blender)
+### 4. `service-notifications` (Real-Time Notifications)
+- **Framework**: FastAPI (Python) + `sse-starlette`
+- **Port**: 8000 (internal)
+- **Responsibilities**:
+  - Expose a Server-Sent Events (SSE) stream per user
+  - Subscribe to Redis Pub/Sub channel `user_notifications:{client_id}`
+  - Forward processing status events (PROCESSING, COMPLETED, FAILED) to the browser in real-time
+- **Broker**: Redis Pub/Sub
+- **Key files**: `main.py`
 
-- **Role**: The muscle. Handles all CPU-intensive 3D operations.
-- **Tech**: Python Celery, Blender 3.6 LTS (Headless), gltfpack.
-- **Pipeline**: It runs a background Blender instance to programmatically open, inspect, and repair 3D files without freezing the main API.
+### 5. `service-3d-worker` (3D Processing Worker)
+- **Framework**: Celery + Blender (headless `bpy`)
+- **Concurrency**: 2 workers
+- **Responsibilities**:
+  - Dequeue `worker.process_asset` tasks from Redis
+  - Download raw model from MinIO
+  - Extract ZIP archives (including nested ZIPs)
+  - Run Blender headlessly: import → normalize → validate → export GLB
+  - Upload processed GLB to MinIO (`processed/` prefix)
+  - Update asset status in PostgreSQL
+  - Broadcast status events via Redis Pub/Sub → SSE notifications
+- **Processing steps inside Blender**:
+  1. Reset scene
+  2. Import model (FBX, OBJ, STL, GLTF/GLB, BLEND)
+  3. Normalize (scale to unit cube, center geometry, inject metadata, auto-smooth)
+  4. Relink missing textures (disk scan)
+  5. Auto-connect textures by name-similarity matching
+  6. Fix transparency (vegetation → HASHED, glass → BLEND)
+  7. Validate (NaN/Inf geometry, manifold check for sliceable, texture existence)
+  8. Export as GLB with all modifiers applied
+- **Key files**: `worker.py`, `process_model.py`, `celery_app.py`, `utils_worker.py`
 
-### 2.4 Infrastructure (Docker)
+### 6. `api-gateway` (Nginx Reverse Proxy)
+- **Image**: Nginx
+- **Port**: 8000 (public)
+- **Responsibilities**:
+  - Route `/auth/` → `service-auth`
+  - Route `/rooms/` → `service-rooms`
+  - Route `/assets/` → `service-assets` (max body 500MB)
+  - Route `/notifications/` → `service-notifications` (buffering disabled for SSE)
+  - Global rate limiting: 100 req/min, burst 20
+  - CORS headers for `http://localhost:5173`
 
-The entire stack runs in containers orchestrated by `docker-compose.yml`:
-
-- `cortex_api`: The FastAPI web server.
-- `cortex_worker`: The processing unit (contains Blender).
-- `cortex_db`: PostgreSQL database for user/asset metadata.
-- `cortex_redis`: Message broker for the Celery task queue.
-- `cortex_minio`: S3-Compatible Object Storage for holding the actual 3D files.
-
----
-
-## 3. Security & Access Control
-
-We implement a multi-layered security model to protect intellectual property (3D Assets) and user data.
-
-- **Authentication**: We use **OAuth2 with Password Flow**.
-  - Users exchange credentials for a **JSON Web Token (JWT)**.
-  - This token identifies the user and their role (`STAFF` or `STUDENT`) for stateless authentication across requests.
-- **Password Storage**: Passwords are hashed using **Bcrypt**, a robust one-way hashing algorithm that is resistant to rainbow table attacks.
-- **RBAC (Role-Based Access Control)**:
-  - **Students**: Can View assets, Join rooms.
-  - **Staff**: Can Upload assets, Create rooms, Invite users, Delete content.
-  - This is enforced at the API level (e.g., `upload_asset` endpoint checks `if role == STAFF`).
-- **Storage Access**:
-  - Direct access to MinIO/S3 is blocked.
-  - Assets are accessed via **Presigned URLs** generated by the backend. These URLs are valid for only 1 hour, ensuring that even if a link is leaked, it cannot be used indefinitely.
-
----
-
-## 4. The 3D Processing Pipeline
-
-How do we guarantee a model works? We put it through a rigorous "Car Wash" pipeline.
-
-**Step 1: Ingestion**
-
-- User uploads a file (GLB, FBX, OBJ, or ZIP).
-- **RBAC Check**: Only `STAFF` users are allowed to upload.
-- The API streams the raw file directly to MinIO (S3) to ensure data safety.
-
-**Step 2: Analysis & Extraction**
-
-- The Worker picks up the job.
-- **Zip Handling**: If it's a ZIP, we recursively extract it to find the "Main Model" (e.g., `scene.gltf` inside `nested/folder/`).
-- **Texture Discovery**: We scan the directory for image files to prepare for relinking.
-
-**Step 3: The Blender "Fixer" (`process_model.py`)**
-We launch Blender in the background to perform surgery on the model:
-
-1.  **Validation**: We check for "Corrupt Geometry" (NaN values) or empty meshes.
-2.  **Auto-Smooth**: We enable auto-smooth to fix "low-poly faceted" looks.
-3.  **Smart Relinking**: If a texture path is broken (e.g., `C:/Users/Artist/Desktop/tex.png`), we search our extracted folder for `tex.png` and reconnect it.
-4.  **Transparency Repair**: We detect leaves/glass.
-    - _Leaves_ -> Force "Alpha Hashed" (Crisp edges).
-    - _Glass_ -> Force "Alpha Blend" (See-through).
-5.  **Normalization**: We scale the model to fit inside a 1x1x1 unit cube and center it at (0,0,0).
-
-**Step 4: Optimization**
-
-- The fixed model is exported as `.glb`.
-- We run `gltfpack` to compress textures and geometry, ensuring fast downloads.
-
----
-
-## 5. Slicing & Metadata Injection
-
-A unique feature of Cortex AI is the ability to "Slice" medical models to see internal structures.
-
-- **The Problem**: Standard 3D files don't intrinsically support slicing.
-- **The Solution**: We inject **Use-Case Metadata** into the database.
-- **Mechanics**:
-  - When uploading, Staff can toggle `Is Sliceable`.
-  - In the **Frontend**: If `is_sliceable=true`, we enable the "Cross Section" tool in Three.js, which uses `clippingPlanes` to render the cut.
-  - In **Unity**: We use a custom Shader that discards pixels based on the plane position, synced across the network.
+### 7. Frontend
+- **Framework**: React 19 + TypeScript + Vite
+- **Port**: 5173
+- **Libraries**: React Three Fiber (3D viewer), TanStack Query, Framer Motion, Axios, React Router, Tailwind CSS, Lucide Icons
+- **Pages**:
+  - `/login` – JWT authentication
+  - `/register` – Role-based user registration
+  - `/` (Assets) – Upload, view, and manage 3D assets
+  - `/rooms` – Create and manage virtual rooms, invite users
 
 ---
 
-## 6. Unity & VR Integration (Collaboration)
+## Infrastructure Services
 
-The Unity Client is a "dumb terminal" that relies on the Backend for data and Photon for networking.
-
-### 6.1 Connection Flow
-
-1.  **Auth**: The user logs in to Unity using their Cortex credentials. The Backend returns a JWT.
-2.  **Room Entry**: The user selects a Room to join.
-3.  **The Handshake**:
-    - The Backend returns the Room's **UUID** (e.g., `123e4567-e89b...`).
-    - Unity connects to **Photon Fusion Cloud**.
-    - **CRITICAL**: Unity uses the **Room UUID directly as the Photon Session Name**.
-    - This guarantees that everyone who joins "Anatomy Class 101" in the API ends up in the exact same multiplayer session.
-
-### 6.2 Runtime Asset Import
-
-Unity does **not** have the models baked in. It downloads them on the fly (Runtime).
-
-1.  Unity asks API: _"What assets are in this room?"_
-2.  API returns JSON: `[{ "url": "https://s3.cortex.com/asset.glb", "pos": ... }]`
-3.  Unity uses a library (like `GLTFast` or `UniGLTF`) to stream the GLB file from the URL.
-4.  Because the Backend already **Normalized** the model (Scale 1.0, Center 0,0), it spawns exactly where expected, with no manual adjustment needed by the user.
-
-### 6.3 Networked Synchronization
-
-- **Position Sync**: When a user grabs a model in VR, its `Transform` is synced via `NetworkTransform` in Photon.
-- **Slice Sync**: If a teacher moves the Slicing Plane, the plane's position/rotation is a **Networked Variable**. All students' shaders update locally to match this variable, meaning everyone sees the _exact same cut_ at the _exact same time_.
+| Service | Image | Port(s) | Role |
+|---|---|---|---|
+| PostgreSQL | `postgres:15` | 5433→5432 | Primary relational database |
+| Redis | `redis:7` | internal | Task queue broker + Pub/Sub |
+| MinIO | `minio/minio` | 9000 (API), 9001 (Console) | S3-compatible object storage |
 
 ---
 
-## Summary
+## Data Models
 
-Cortex AI is an end-to-end pipeline. It takes raw, potentially broken 3D files from artists, cleans them up automatically using Blender, stores them in the cloud, and serves them to both Web and Unity clients, synchronizing the experience using Photon Fusion for a truly shared educational environment.
+### User
+| Field | Type | Notes |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `username` | String | Unique, indexed |
+| `password_hash` | String | bcrypt |
+| `role` | Enum | TEACHER / TA / STUDENT |
+
+### Room
+| Field | Type | Notes |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `name` | String | Display name |
+| `description` | String | Optional |
+| `owner_id` | UUID | FK → users.id |
+| `is_online` | Boolean | Live session flag |
+| `max_participants` | Integer | Default 20 |
+| `created_at` | DateTime | UTC |
+
+### RoomMember
+| Field | Type | Notes |
+|---|---|---|
+| `room_id` | UUID | PK + FK → rooms.id |
+| `user_id` | UUID | PK + FK → users.id |
+| `status` | Enum | INVITED / JOINED |
+| `permissions` | JSON | `{can_slice, can_talk, can_interact}` |
+
+### Asset
+| Field | Type | Notes |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `owner_id` | UUID | FK → users.id |
+| `filename` | String | Original filename |
+| `asset_type` | Enum | MODEL / VIDEO / SLIDE / IMAGE |
+| `is_sliceable` | Boolean | Manifold slicing flag |
+| `status` | Enum | PENDING / PROCESSING / COMPLETED / FAILED |
+| `original_path` | String | MinIO key e.g. `raw/{id}.fbx` |
+| `processed_path` | String | MinIO key e.g. `processed/{id}.glb` |
+| `metadata_json` | JSON | Processing metadata / errors |
+
+---
+
+## Security
+
+| Mechanism | Detail |
+|---|---|
+| **Authentication** | JWT Bearer tokens (HS256, 15 min expiry) |
+| **Password Storage** | bcrypt via `passlib` |
+| **RBAC** | Role checked per endpoint (TEACHER/TA/STUDENT) |
+| **Rate Limiting** | Nginx: 100 req/min per IP, burst 20 |
+| **CORS** | Nginx whitelist (localhost:5173 in dev) |
+| **File Validation** | Extension whitelist per asset type |
+| **Asset Ownership** | All asset queries filter by `owner_id = current_user.id` |
+
+---
+
+## Environment Variables (`.env`)
+
+| Variable | Used By | Example |
+|---|---|---|
+| `SECRET_KEY` | Auth, all services | `supersecretkey` |
+| `DATABASE_URL` | All services | `postgresql://user:pw@db:5432/cortex` |
+| `REDIS_URL` | Assets, Notifications, Worker | `redis://redis:6379/0` |
+| `MINIO_ENDPOINT` | Assets, Worker | `http://minio:9000` |
+| `MINIO_EXTERNAL_ENDPOINT` | Assets (presigned URLs) | `http://localhost:9000` |
+| `MINIO_ACCESS_KEY` | Assets, Worker | `minioadmin` |
+| `MINIO_SECRET_KEY` | Assets, Worker | `minioadmin` |
+| `MINIO_BUCKET` | Assets, Worker | `assets` |
+| `POSTGRES_USER` | DB | `cortex` |
+| `POSTGRES_PASSWORD` | DB | `cortex` |
+| `POSTGRES_DB` | DB | `cortex` |
+| `MINIO_ROOT_USER` | MinIO | `minioadmin` |
+| `MINIO_ROOT_PASSWORD` | MinIO | `minioadmin` |

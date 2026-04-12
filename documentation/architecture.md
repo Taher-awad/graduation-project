@@ -1,57 +1,188 @@
-# System Architecture
+# EduVR – Cortex AI Platform: Architecture Reference
 
-## High-Level Overview
+## Architecture Pattern
 
-Cortex AI Pipeline is a web-based 3D asset management and collaboration system. It allows users (Students and Staff) to upload 3D models (and other media), which are then automatically processed, optimized, and prepared for web viewing. The system also supports "Rooms" for real-time collaboration.
+**Microservices** — Each service is an independent, containerized FastAPI application with its own concern. Services communicate indirectly through:
+- **Shared PostgreSQL database** (same ORM models, separate logical ownership)
+- **Redis** as a task broker (Celery async tasks) and pub/sub bus (real-time events)
+- **MinIO** as shared S3-compatible object storage
+- **Nginx API Gateway** as the single entry-point for all client requests
 
-The application serves two main purposes:
+---
 
-1.  **Asset Pipeline:** Automated ingestion, validation, and conversion of 3D assets (GLTF, FBX, OBJ, Blend) into web-optimized GLB files.
-2.  **Collaboration:** Managing virtual rooms where authenticated users can interact with these assets.
+## Container Topology
 
-## Subsystems & Communication
+```
+                    ┌──────────────────────────┐
+                    │    Frontend (React/Vite)  │
+                    │       port 5173           │
+                    └────────────┬─────────────┘
+                                 │
+                    ┌────────────▼─────────────┐
+                    │   Nginx API Gateway       │
+                    │       port 8000           │
+                    │  /auth/   →  service-auth │
+                    │  /rooms/  →  service-rooms│
+                    │  /assets/ →  service-assets│
+                    │  /notifications/ → notifs │
+                    └──┬──────┬──────┬──────┬──┘
+                       │      │      │      │
+           ┌───────────▼─┐ ┌──▼──┐ ┌▼────┐ ┌▼──────────────┐
+           │ service-auth│ │rooms│ │assets│ │notifications  │
+           │ FastAPI:8000│ │:8000│ │:8000 │ │FastAPI +SSE   │
+           └─────────────┘ └─────┘ └──┬──┘ └───────────────┘
+                  │           │        │              │
+           ┌──────▼───────────▼──┐    │        ┌─────▼──────┐
+           │   PostgreSQL :5432   │    │        │  Redis      │
+           │  (shared schema)     │◄───┘        │  :6379      │
+           └──────────────────────┘             └─────┬──────┘
+                                                      │ pub/sub
+                                          ┌───────────▼──────────┐
+           ┌──────────────────────────┐   │  service-3d-worker   │
+           │  MinIO Object Storage    │◄──│  Celery + Blender    │
+           │  port 9000 (API)         │   │  concurrency: 2      │
+           │  port 9001 (Console UI)  │   └──────────────────────┘
+           └──────────────────────────┘
+```
 
-### 1. Frontend (Client)
+---
 
-- **Tech:** React (Vite, TypeScript, TailwindCSS).
-- **Role:** User interface for uploading assets, managing rooms, and viewing 3D models.
-- **Communication:** Sends HTTP REST requests to the **Backend API**.
+## Request Routing
 
-### 2. Backend API
+| Client URL Pattern | Gateway Routes To | Service |
+|---|---|---|
+| `GET /auth/login` | `http://auth_service/auth/login` | service-auth |
+| `POST /auth/register` | `http://auth_service/auth/register` | service-auth |
+| `GET /rooms/` | `http://rooms_service/rooms/` | service-rooms |
+| `POST /rooms/{id}/invite` | `http://rooms_service/rooms/{id}/invite` | service-rooms |
+| `POST /assets/upload` | `http://assets_service/assets/upload` | service-assets |
+| `GET /assets/` | `http://assets_service/assets/` | service-assets |
+| `GET /notifications/stream/{id}` | `http://notifications_service/notifications/stream/{id}` | service-notifications |
 
-- **Tech:** Python (FastAPI), SQLAlchemy.
-- **Role:** Handles authentication, business logic, file upload coordination, and database management.
-- **Communication:**
-  - **DB:** Reads/Writes metadata to **PostgreSQL**.
-  - **Storage:** Streams file uploads to **MinIO (S3)**.
-  - **Queue:** Offloads heavy 3D processing tasks to the **Celery Worker** via **Redis**.
+---
 
-### 3. Celery Worker (Processing Engine)
+## Authentication Flow
 
-- **Tech:** Python (Celery), Blender 3.6 LTS, gltfpack.
-- **Role:** Performs heavy computational tasks in the background. Does NOT handle HTTP requests.
-- **Tasks:**
-  - Downloads raw asset from **MinIO**.
-  - Validates 3D model geometry and textures.
-  - Runs headless **Blender** scripts (`process_model.py`) to normalize and export to GLB.
-  - Uploads processed artifacts back to **MinIO**.
-  - Updates status in **PostgreSQL**.
+```
+Client                      Gateway              Auth Service          Database
+  │                           │                       │                   │
+  ├──POST /auth/login ────────►│                       │                   │
+  │                           ├──proxy──────────────►│                   │
+  │                           │                       ├──query user──────►│
+  │                           │                       │◄──user record─────┤
+  │                           │                       ├──verify password   │
+  │                           │                       ├──create JWT        │
+  │◄──{token, role}───────────┤◄──{token, role}───────┤                   │
+  │                           │                       │                   │
+  ├──GET /rooms/ + Bearer ────►│                       │                   │
+  │                           ├──proxy──────────────►rooms_service        │
+  │                           │                       ├──decode JWT        │
+  │                           │                       ├──query user──────►│
+  │◄──[rooms array]───────────┤◄──[rooms]─────────────┤                   │
+```
 
-### 4. Database (Persistence)
+---
 
-- **Tech:** PostgreSQL 15.
-- **Role:** Stores relational data: Users, Assets, Rooms, Memberships.
+## 3D Asset Processing Pipeline
 
-### 5. Object Storage (MinIO)
+```
+Client                   Assets Service         Redis           3D Worker           Blender           MinIO
+  │                          │                    │                │                   │                 │
+  ├─POST /assets/upload──────►│                    │                │                   │                 │
+  │                          ├─upload raw file─────────────────────────────────────────────────────────►│
+  │                          ├─insert DB (PENDING) │                │                   │                 │
+  │                          ├─send_task───────────►│                │                   │                 │
+  │◄─{id, PENDING}───────────┤                    │                │                   │                 │
+  │                          │                    ├─dequeue────────►│                   │                 │
+  │                          │                    │                ├─download raw───────────────────────►│
+  │                          │                    │                │◄─file──────────────────────────────┤
+  │                          │                    │                ├─run_blender────────►│                 │
+  │                          │                    │                │   ├─import          │                 │
+  │                          │                    │                │   ├─normalize       │                 │
+  │                          │                    │                │   ├─relink textures │                 │
+  │                          │                    │                │   ├─validate        │                 │
+  │                          │                    │                │   └─export GLB      │                 │
+  │                          │                    │                │◄─success────────────┤                 │
+  │                          │                    │                ├─upload GLB──────────────────────────►│
+  │                          │                    │                ├─update DB (COMPLETED)│                │
+  │                          │                    ├◄─publish───────┤                   │                 │
+  │◄─SSE event (COMPLETED)───────────────────────┤                │                   │                 │
+```
 
-- **Tech:** MinIO (S3-compatible).
-- **Role:** Stores binary files (Raw uploads and Processed GLBs).
+---
 
-### 6. Message Broker (Redis)
+## Real-Time Notification Architecture
 
-- **Tech:** Redis 7.
-- **Role:** Orchestrates task queues between API and Worker.
+```
+3D Worker                Redis                Notifications Service         Browser
+    │                      │                          │                        │
+    ├─publish─────────────►│                          │                        │
+    │  channel:            │  subscribed to same      │                        │
+    │  user_notifications: │  channel (per user)      │                        │
+    │  {user_id}           ├─push message─────────────►│                        │
+    │                      │                          ├─SSE event push──────────►│
+    │                      │                          │    event: message        │
+    │                      │                          │    data: {...}           │
+```
 
-## C4 Context Diagram
+---
 
-![System Context Diagram](images/architecture.png)
+## Service Dependencies
+
+| Service | Depends On |
+|---|---|
+| `service-auth` | PostgreSQL |
+| `service-rooms` | PostgreSQL, service-auth (JWT validation) |
+| `service-assets` | PostgreSQL, Redis, MinIO, service-auth (JWT) |
+| `service-notifications` | Redis |
+| `service-3d-worker` | PostgreSQL, Redis, MinIO |
+| `api-gateway` | All 4 FastAPI services |
+| `frontend` | api-gateway |
+
+---
+
+## Shared Code Layer
+
+All Python microservices share a common `shared/` package mounted via Docker build context:
+
+| File | Purpose |
+|---|---|
+| `shared/models.py` | SQLAlchemy ORM models (User, Room, RoomMember, Asset) |
+| `shared/schemas.py` | Pydantic request/response schemas |
+| `shared/database.py` | SQLAlchemy engine + SessionLocal + Base |
+| `shared/auth_utils.py` | bcrypt hashing, JWT create/verify, constants |
+| `shared/dependencies.py` | FastAPI `get_current_user` dependency (JWT decode + DB lookup) |
+
+---
+
+## Docker Compose Services Summary
+
+| Container | Image/Dockerfile | External Ports | Internal Port |
+|---|---|---|---|
+| `cortex_api_gateway` | custom Nginx | **8000** | 8000 |
+| `cortex_frontend` | custom Node | **5173** | 5173 |
+| `cortex_db` | postgres:15 | **5433** | 5432 |
+| `cortex_minio` | minio/minio | **9000** (API), **9001** (Console) | 9000, 9001 |
+| `cortex_redis` | redis:7 | none (internal) | 6379 |
+| `cortex_service_auth` | custom Python | none | 8000 |
+| `cortex_service_rooms` | custom Python | none | 8000 |
+| `cortex_service_assets` | custom Python | none | 8000 |
+| `cortex_service_notifications` | custom Python | none | 8000 |
+| `cortex_service_3d_worker` | custom Python | none | – (Celery) |
+
+---
+
+## RBAC Permission Matrix
+
+| Action | STUDENT | TA | TEACHER |
+|---|---|---|---|
+| Register / Login | ✅ | ✅ | ✅ |
+| View own rooms | ✅ | ✅ | ✅ |
+| Create rooms | ❌ | ✅ | ✅ |
+| Invite to rooms | ❌ (owner only) | ✅ (own rooms) | ✅ (own rooms) |
+| Join via invite | ✅ | ✅ | ✅ |
+| Upload assets | ❌ | ✅ | ✅ |
+| View own assets | ✅ | ✅ | ✅ |
+| Delete own assets | ✅ | ✅ | ✅ |
+| Update room status | ❌ (owner only) | ✅ (own rooms) | ✅ (own rooms) |
+| Delete rooms | ❌ (owner only) | ✅ (own rooms) | ✅ (own rooms) |

@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import sys
 import os
 from contextlib import asynccontextmanager
@@ -19,14 +18,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Cortex AI - Rooms Service", lifespan=lifespan)
 
-# Allow Traefik/Nginx Gateway to forward requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is handled exclusively by the Nginx API Gateway
 
 app.include_router(room_router)
 

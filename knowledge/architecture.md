@@ -1,41 +1,75 @@
-# EduVR System Architecture
+# Architecture Knowledge: Cortex AI Microservices
 
-## High-Level Architecture
-The EduVR platform is built on a modular and scalable architecture designed to support real-time VR multiplayer interactions, web interfaces, and AI services.
+## Service Map
 
-The system is broadly divided into:
-1. **User Interfaces**: Unity VR Client & Web Visualization Interface.
-2. **Central Backend**: Handles authentication, session management, and cross-platform communication.
-3. **EduVR Core (AI Service)**: Manages RAG-based intelligence and content processing.
-4. **Data Storage**: Stores user data, assets, and learning materials.
+```
+Browser ──► Nginx :8000 ──► service-auth       (JWT auth)
+                       ──► service-rooms      (room CRUD)
+                       ──► service-assets     (file upload + Celery dispatch)
+                       ──► service-notifications (SSE stream)
+                                                       ▲
+                                                       │ Redis pub/sub
+                                              service-3d-worker
+                                              (Celery + Blender)
+```
 
-## Key Subsystems
+## Shared Layer
 
-### 1. Collaboration Room Manager
-- Orchestrates multi-user sessions.
-- Generates unique Session IDs consumed by the **Photon Fusion** networking engine.
-- Allows instructors to create virtual classrooms and manage student access via an invitation system.
-- Controls room states natively (Online/Offline).
+All Python services share `microservices/shared/`:
+- `models.py` — SQLAlchemy ORM (User, Room, RoomMember, Asset)
+- `schemas.py` — Pydantic request/response models
+- `database.py` — Engine + SessionLocal
+- `auth_utils.py` — bcrypt + JWT (SECRET_KEY, HS256, 15min expiry)
+- `dependencies.py` — `get_current_user` FastAPI dependency
 
-### 2. Automated 3D Asset Processor
-- Pipeline built using **Celery** and **Headless Blender**.
-- Automatically ingests raw uploaded 3D files (GLB, FBX, ZIP).
-- Performs geometry validation, texture link repairs, transparency artifact fixes, and mesh optimization.
-- Ensures assets perform optimally on both Web (Three.js) and VR (Unity Meta Quest target) clients.
+## Real-Time Architecture
 
-### 3. Asset Management System
-- A web interface allowing staff to upload, organize, and manage 3D content.
-- Enforces strict **Role-Based Access Control (RBAC)** to ensure only authorized personnel can manipulate learning assets.
+```
+Worker ──publish──► Redis channel "user_notifications:{user_id}"
+Notifications Service ──subscribe──► same channel
+Browser ──SSE stream──► Notifications Service
+```
 
-### 4. RAG-Powered AI Tutor (EduVR Core)
-- Implements a Retrieval-Augmented Generation (RAG) approach (likely via LangChain as per references).
-- Processes user queries by retrieving validated educational material prior to generating answers, preventing AI hallucinations.
-- Serves as the backbone for both text and voice-based interaction with students.
+## Key Design Patterns
 
-## Technology Stack (Inferred from Report)
-- **VR Engine**: Unity
-- **Networking/Multiplayer**: Photon Fusion 2
-- **3D Processing Backend**: Python (Celery, Headless Blender)
-- **AI/LLM Integration**: LangChain (RAG)
-- **Web 3D Visualization**: Three.js
-- **Model Standard**: glTF 2.0 / GLB
+### User-Scoped Data
+All asset queries filter by `owner_id = current_user.id`:
+```python
+query = db.query(Asset).filter(Asset.owner_id == current_user.id)
+```
+
+### Decoupled Task Dispatch
+Assets service sends Celery task **without importing worker code**:
+```python
+celery_app = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
+celery_app.send_task("worker.process_asset", args=[str(asset_id)])
+```
+
+### Presigned URL Generation
+Two MinIO clients exist in assets service:
+- `s3`: internal endpoint (`http://minio:9000`) — for uploads/downloads inside Docker
+- `s3_signer`: external endpoint (`http://localhost:9000`) — for presigned URLs that the browser can access
+
+### Dual MinIO Endpoints (Important Gotcha)
+Internal (`MINIO_ENDPOINT=http://minio:9000`) — used by Python containers  
+External (`MINIO_EXTERNAL_ENDPOINT=http://localhost:9000`) — used to sign URLs that browsers resolve
+
+## Ports Summary
+
+| Service | External Port | Internal Port |
+|---|---|---|
+| API Gateway | **8000** | 8000 |
+| Frontend | **5173** | 5173 |
+| PostgreSQL | **5433** | 5432 |
+| MinIO API | **9000** | 9000 |
+| MinIO Console | **9001** | 9001 |
+| Redis | — (internal) | 6379 |
+
+## RBAC Rules
+
+- **Create rooms**: TEACHER or TA
+- **Upload assets**: TEACHER or TA
+- **Invite to room**: Room OWNER only
+- **Update room status / Delete room**: Room OWNER only
+- **Join room**: Any user with a pending invitation
+- **View/download assets**: Asset OWNER only

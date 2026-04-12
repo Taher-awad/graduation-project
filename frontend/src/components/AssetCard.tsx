@@ -1,31 +1,35 @@
 import { AssetType, AssetStatus } from '../types';
 import type { Asset } from '../types';
-import { Box, Play, FileText, Download, Clock, AlertTriangle, CheckCircle2, Eye, Trash2 } from 'lucide-react';
+import { Box, Play, FileText, Download, Clock, AlertTriangle, CheckCircle2, Eye, Trash2, Search } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
 import api from '../api/client';
 
 const StatusBadge = ({ status }: { status: AssetStatus }) => {
-  const styles = {
+  const styles: Record<string, string> = {
     [AssetStatus.COMPLETED]: "bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20",
     [AssetStatus.PROCESSING]: "bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 animate-pulse",
+    [AssetStatus.SCANNING]: "bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 animate-pulse",
+    [AssetStatus.PENDING_SELECTION]: "bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20",
     [AssetStatus.PENDING]: "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-500/20",
     [AssetStatus.FAILED]: "bg-red-50 text-red-600 border-red-100 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20",
   };
 
-  const icons = {
+  const icons: Record<string, React.ElementType> = {
     [AssetStatus.COMPLETED]: CheckCircle2,
     [AssetStatus.PROCESSING]: Clock,
+    [AssetStatus.SCANNING]: Clock,
+    [AssetStatus.PENDING_SELECTION]: Search,
     [AssetStatus.PENDING]: Clock,
     [AssetStatus.FAILED]: AlertTriangle,
   };
 
-  const Icon = icons[status];
+  const Icon = icons[status] ?? Clock;
 
   return (
-    <span className={clsx("flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border", styles[status])}>
+    <span className={clsx("flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border", styles[status] ?? styles[AssetStatus.PENDING])}>
       <Icon size={12} strokeWidth={3} />
-      {status}
+      {status.replace('_', ' ')}
     </span>
   );
 };
@@ -34,9 +38,10 @@ interface AssetCardProps {
   asset: Asset;
   onView: () => void;
   onDelete?: () => void;
+  onContinueSelection?: () => void;
 }
 
-export const AssetCard = ({ asset, onView, onDelete }: AssetCardProps) => {
+export const AssetCard = ({ asset, onView, onDelete, onContinueSelection }: AssetCardProps) => {
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this asset?')) return;
@@ -82,7 +87,18 @@ export const AssetCard = ({ asset, onView, onDelete }: AssetCardProps) => {
       </div>
 
       <div className="flex gap-2.5 mt-auto">
-          {/* View Button for All Completed Types */}
+          {/* Continue Selection button for PENDING_SELECTION */}
+          {asset.status === AssetStatus.PENDING_SELECTION && onContinueSelection && (
+              <button
+                onClick={onContinueSelection}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-xl transition-colors shadow-lg shadow-indigo-500/20"
+              >
+                <Search size={16} />
+                Select Objects
+              </button>
+          )}
+
+          {/* View Button for completed */}
           {asset.status === AssetStatus.COMPLETED && (
               <button
                 onClick={onView}

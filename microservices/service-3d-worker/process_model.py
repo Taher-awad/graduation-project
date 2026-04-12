@@ -154,13 +154,29 @@ def normalize_model(is_sliceable, asset_id):
     except:
         pass
         
-    # --- AUTO SMOOTH FIX (Weighted Normal Modifier) ---
-    print("DEBUG: Enabling Auto Smooth...", flush=True)
+    # --- AUTO SMOOTH FIX ---
+    # Blender 4.1+ removed use_auto_smooth. Use shade_smooth + mark_sharp via bmesh instead.
+    print("DEBUG: Enabling Auto Smooth (Blender 4.x compatible)...", flush=True)
+    import bmesh
     try:
         for obj in mesh_objects:
             if obj.type == 'MESH':
-                obj.data.use_auto_smooth = True
-                obj.data.auto_smooth_angle = 3.14159 / 3 # 60 degrees
+                # Shade smooth all faces
+                mesh = obj.data
+                for poly in mesh.polygons:
+                    poly.use_smooth = True
+                # Mark sharp edges above 60 degrees using bmesh
+                bm = bmesh.new()
+                bm.from_mesh(mesh)
+                import math
+                threshold = math.radians(60)
+                for edge in bm.edges:
+                    if len(edge.link_faces) == 2:
+                        angle = edge.calc_face_angle(0.0)
+                        edge.smooth = angle < threshold
+                bm.to_mesh(mesh)
+                bm.free()
+                mesh.update()
     except Exception as e:
         print(f"Error enabling Auto Smooth: {e}", flush=True)
 
@@ -223,12 +239,11 @@ def normalize_model(is_sliceable, asset_id):
             if is_vegetation:
                 print(f"Material '{mat.name}': Detected Vegetation. Forcing HASHED.", flush=True)
                 mat.blend_method = 'HASHED'
-                mat.shadow_method = 'HASHED'
+                # mat.shadow_method removed in Blender 4.x — shadows follow blend_method automatically
                 mat.use_backface_culling = False
             elif is_glass:
                 print(f"Material '{mat.name}': Detected Glass. Forcing BLEND.", flush=True)
                 mat.blend_method = 'BLEND'
-                mat.shadow_method = 'HASHED'
                 mat.use_backface_culling = False
             else:
                 # Generic Material (e.g. Cannon)
@@ -237,15 +252,11 @@ def normalize_model(is_sliceable, asset_id):
                 print(f"Material '{mat.name}': Generic material with Alpha link. Keep existing mode or Default to OPAQUE.", flush=True)
                 if mat.blend_method == 'OPAQUE':
                      # Ensure it stays opaque even if there's a link (often a mistake in Sketchfab imports)
-                     pass 
+                     pass
                 else:
-                    # If it WAS transparent, maybe it should be?
-                    # But for "Ghost Cannon", it was likely OPAQUE in Blender but my previous script forced HASHED.
-                    # Let's be safe: If it's not vegetation/glass, treat as OPAQUE unless user explicitly named it "Transparent".
                     if 'trans' not in mat_name_lower and 'alpha' not in mat_name_lower:
                         print(f"  -> Reverting '{mat.name}' to OPAQUE (Conservative Fix)", flush=True)
                         mat.blend_method = 'OPAQUE'
-                        mat.shadow_method = 'OPAQUE'
             continue
 
 def relink_textures():
@@ -430,17 +441,10 @@ def auto_connect_textures():
                     tex.location = (-300, 300)
                     tex.location = (-300, 300)
                     mat.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
-                    
-                    # --- AUTO-LINK EMBEDDED ALPHA ---
-                    # Many PBR textures (especially from GLTF/Unity) have Alpha in the Diffuse/Albedo channel.
-                    # If we just linked Base Color, let's also link its Alpha output to the BSDF Alpha.
-                    # We can assume if there's a separate Alpha file, it will overwrite this later.
-                    if 'Alpha' in bsdf.inputs:
-                        mat.node_tree.links.new(tex.outputs['Alpha'], bsdf.inputs['Alpha'])
-                        mat.blend_method = 'HASHED'
-                        mat.shadow_method = 'HASHED'
-                        mat.use_backface_culling = False
-                        print(f"    -> Linked Embedded Alpha from {os.path.basename(match)}")
+                    # NOTE: Do NOT auto-link the texture's Alpha output to BSDF Alpha.
+                    # Diffuse textures (e.g. cannon_diff.jpg) are opaque — auto-linking alpha
+                    # causes solid objects to become transparent. Alpha is handled
+                    # separately in the dedicated alpha-texture matching pass below.
                 except:
                     pass
 
@@ -461,7 +465,7 @@ def auto_connect_textures():
                     mat.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Alpha'])
                     
                     mat.blend_method = 'HASHED'
-                    mat.shadow_method = 'HASHED'
+                    # mat.shadow_method removed in Blender 4.x
                     mat.use_backface_culling = False
                 except:
                     pass
@@ -540,7 +544,7 @@ def fix_transparency():
                 img_name = node.image.name.lower()
                 # If the image specifically says it's NOT alpha (e.g. Roughness, Normal, AO)
                 # Then this link is likely garbage/mistake from an auto-importer.
-                banned_for_alpha = ['diffuse', 'color', 'roughness', 'metal', 'normal', 'nrm', 'ao', 'occlusion', 'bump']
+                banned_for_alpha = ['diff', 'diffuse', 'color', 'roughness', 'rough', 'metal', 'metallic', 'normal', 'nrm', 'ao', 'occlusion', 'bump']
                 # But be careful: "Leaves_Color_Alpha.png" might be valid.
                 # So only ban if it DOESN'T contain "alpha" or "opacity".
                 
@@ -548,13 +552,13 @@ def fix_transparency():
                     print(f"Material '{mat.name}': Found SUSPICIOUS Alpha Link to '{img_name}'. Unlinking and forcing OPAQUE.")
                     mat.node_tree.links.remove(link)
                     mat.blend_method = 'OPAQUE'
-                    mat.shadow_method = 'OPAQUE'
+                    # mat.shadow_method removed in Blender 4.x
                     is_valid_alpha = False
             
             if is_valid_alpha:
                 print(f"Material '{mat.name}': Alpha ALREADY linked. Setting HASHED.")
                 mat.blend_method = 'HASHED'
-                mat.shadow_method = 'HASHED'
+                # mat.shadow_method removed in Blender 4.x
                 mat.use_backface_culling = False
             continue
             
@@ -585,7 +589,7 @@ def fix_transparency():
                 links.new(tex_node.outputs['Color'], alpha_socket)
                 
                 mat.blend_method = 'HASHED'
-                mat.shadow_method = 'HASHED'
+                # mat.shadow_method removed in Blender 4.x
                 mat.use_backface_culling = False
 
 
@@ -692,6 +696,117 @@ def export_model(output_path):
         export_texcoords=True
     )
 
+def is_skybox_object(obj, all_objects):
+    """
+    Heuristic detection of skybox / environment / backdrop objects.
+    Returns True if the object should be stripped from the scene.
+    Flags (object is removed if it matches >= 2 flags):
+      - name implies environment
+      - only uses emission or background shaders (no BSDF)
+      - occupies > 80% of the combined scene bounding volume
+      - has no UV map and exactly 1 material
+    """
+    import math
+
+    score = 0
+    name_lower = obj.name.lower()
+
+    sky_keywords = ['sky', 'dome', 'hdri', 'env', 'backdrop',
+                    'background', 'bg_', 'skydome', 'skybox',
+                    'skysphere', 'ground_plane', 'floor_plane']
+    if any(kw in name_lower for kw in sky_keywords):
+        score += 1
+    if name_lower in ('plane', 'ground', 'floor', 'background', 'sky', 'env'):
+        score += 1
+
+    # Shader check — only Emission / Background / World shaders → not a real model
+    if obj.type == 'MESH' and obj.data.materials:
+        emission_only = True
+        for mat in obj.data.materials:
+            if mat and mat.use_nodes:
+                has_bsdf = any(n.type in ('BSDF_PRINCIPLED', 'BSDF_DIFFUSE',
+                                          'BSDF_GLOSSY', 'BSDF_GLASS')
+                               for n in mat.node_tree.nodes)
+                if has_bsdf:
+                    emission_only = False
+                    break
+        if emission_only:
+            score += 1
+
+    # Size check — if this object's volume is > 80% of the whole scene
+    if obj.type == 'MESH' and hasattr(obj, 'bound_box') and obj.bound_box:
+        import mathutils
+        def obj_volume(o):
+            mw = o.matrix_world
+            corners = [mw @ mathutils.Vector(c) for c in o.bound_box]
+            xs = [c.x for c in corners]
+            ys = [c.y for c in corners]
+            zs = [c.z for c in corners]
+            return max((max(xs)-min(xs)) * (max(ys)-min(ys)) * (max(zs)-min(zs)), 0.0001)
+
+        own_vol = obj_volume(obj)
+        all_vol = sum(obj_volume(o) for o in all_objects if o.type == 'MESH')
+        if all_vol > 0 and own_vol / all_vol > 0.80:
+            score += 1
+
+    # No UV maps and single material → often a skybox sphere
+    if obj.type == 'MESH':
+        if len(obj.data.uv_layers) == 0 and len(obj.data.materials) <= 1:
+            score += 1
+
+    return score >= 2
+
+
+def scan_scene(filepath):
+    """
+    Load a file, strip skybox objects, return JSON describing surviving root objects.
+    Printed to stdout so the worker subprocess can parse it.
+    """
+    import json
+    import mathutils
+
+    reset_scene()
+    import_model(filepath)
+
+    all_mesh_objects = [o for o in bpy.data.objects if o.type == 'MESH']
+
+    # Remove skyboxes
+    removed = []
+    for obj in all_mesh_objects:
+        if is_skybox_object(obj, all_mesh_objects):
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    if removed:
+        print(f"SCAN: Auto-removed skybox/environment objects: {removed}", flush=True)
+
+    # Collect surviving root objects (no parent, or parent is not a MESH)
+    survivors = [o for o in bpy.data.objects
+                 if o.type == 'MESH' and (o.parent is None or o.parent.type != 'MESH')]
+
+    # Also include armature roots (animated characters)
+    armature_roots = [o for o in bpy.data.objects
+                      if o.type == 'ARMATURE' and o.parent is None]
+
+    result = []
+    for obj in survivors:
+        verts = len(obj.data.vertices) if obj.type == 'MESH' else 0
+        result.append({
+            "name": obj.name,
+            "type": obj.type,
+            "vertex_count": verts
+        })
+    for obj in armature_roots:
+        result.append({
+            "name": obj.name,
+            "type": "ARMATURE",
+            "vertex_count": 0
+        })
+
+    print("SCAN_RESULT:" + json.dumps(result), flush=True)
+    return result
+
+
 if __name__ == "__main__":
     import traceback
     try:
@@ -704,18 +819,65 @@ if __name__ == "__main__":
 
         parser = argparse.ArgumentParser()
         parser.add_argument("--input", required=True)
-        parser.add_argument("--output", required=True)
-        parser.add_argument("--sliceable", required=True)
-        parser.add_argument("--id", required=True)
-        
+        parser.add_argument("--output", required=False)
+        parser.add_argument("--sliceable", required=False, default="false")
+        parser.add_argument("--id", required=False, default="unknown")
+        parser.add_argument("--scan", action="store_true",
+                            help="Run in scan-only mode: detect objects, strip skyboxes, return JSON")
+        parser.add_argument("--extract-object", dest="extract_object", default=None,
+                            help="Only keep and export this named root object")
+
         parsed_args = parser.parse_args(my_args)
-        
+
+        # --- SCAN MODE ---
+        if parsed_args.scan:
+            scan_scene(parsed_args.input)
+            sys.exit(0)
+
+        # --- NORMAL PROCESSING MODE ---
+        if not parsed_args.output:
+            print("ERROR: --output is required in processing mode")
+            sys.exit(1)
+
         is_sliceable = parsed_args.sliceable.lower() == 'true'
 
         print(f"Processing: Input={parsed_args.input}, Output={parsed_args.output}")
 
         reset_scene()
         import_model(parsed_args.input)
+
+        # Auto-remove skybox objects before any processing
+        all_mesh_objects = [o for o in bpy.data.objects if o.type == 'MESH']
+        for obj in list(all_mesh_objects):
+            if is_skybox_object(obj, all_mesh_objects):
+                print(f"Auto-removing skybox object: {obj.name}", flush=True)
+                bpy.data.objects.remove(obj, do_unlink=True)
+
+        # If an object name is specified, hide everything else
+        if parsed_args.extract_object:
+            target_name = parsed_args.extract_object
+            print(f"Extracting only object: '{target_name}'", flush=True)
+
+            # Find the target (could be root or child)
+            target = bpy.data.objects.get(target_name)
+            if target is None:
+                print(f"ERROR: Object '{target_name}' not found in scene!")
+                sys.exit(1)
+
+            # Collect the target and all its descendants
+            def collect_descendants(obj):
+                result = {obj}
+                for child in obj.children:
+                    result |= collect_descendants(child)
+                return result
+
+            keep = collect_descendants(target)
+
+            # Remove everything else (excluding cameras/lights needed for export)
+            for obj in list(bpy.data.objects):
+                if obj.type in ('MESH', 'EMPTY', 'ARMATURE', 'CURVE') and obj not in keep:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+
         normalize_model(is_sliceable, parsed_args.id)
         validate_model(is_sliceable)
         optimize_textures()
@@ -725,3 +887,4 @@ if __name__ == "__main__":
     except Exception:
         traceback.print_exc()
         sys.exit(1)
+

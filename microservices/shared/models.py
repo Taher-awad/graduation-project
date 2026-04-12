@@ -22,6 +22,8 @@ class RoomMemberStatus(str, enum.Enum):
 
 class AssetStatus(str, enum.Enum):
     PENDING = "PENDING"
+    SCANNING = "SCANNING"
+    PENDING_SELECTION = "PENDING_SELECTION"
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"

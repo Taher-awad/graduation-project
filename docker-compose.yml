@@ -2,6 +2,22 @@ version: "3.8"
 
 services:
 
+  db:
+    image: postgres:15
+    container_name: cortex_db
+    env_file:
+      - .env
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   service-auth:
     build:
       context: ./microservices
@@ -10,7 +26,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   service-rooms:
     build:
@@ -20,8 +37,10 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - service-auth
+      db:
+        condition: service_healthy
+      service-auth:
+        condition: service_started
 
   service-assets:
     build:
@@ -31,10 +50,14 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
-      - minio
-      - service-auth
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      service-auth:
+        condition: service_started
 
   service-notifications:
     build:
@@ -68,19 +91,12 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
-      - minio
-
-  db:
-    image: postgres:15
-    container_name: cortex_db
-    env_file:
-      - .env
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
 
   redis:
     image: redis:7

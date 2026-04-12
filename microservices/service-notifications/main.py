@@ -2,19 +2,12 @@ import asyncio
 import os
 import json
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
 
 app = FastAPI(title="Cortex AI - Notifications Service")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is handled exclusively by the Nginx API Gateway
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 

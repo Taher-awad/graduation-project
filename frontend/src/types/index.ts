@@ -17,6 +17,8 @@ export type AssetType = (typeof AssetType)[keyof typeof AssetType];
 
 export const AssetStatus = {
   PENDING: "PENDING",
+  SCANNING: "SCANNING",
+  PENDING_SELECTION: "PENDING_SELECTION",
   PROCESSING: "PROCESSING",
   COMPLETED: "COMPLETED",
   FAILED: "FAILED"

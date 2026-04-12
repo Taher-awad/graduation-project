@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { UserRole } from '../types';
 import api from '../api/client';
+import axios from 'axios';
 import { Lock, User, Box, ArrowRight, ShieldCheck, GraduationCap } from 'lucide-react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
@@ -23,8 +24,23 @@ export const Register = () => {
       await api.post('/auth/register', { username, password, role });
       navigate('/login');
     } catch (err) {
-      const apiErr = err as { response?: { data?: { detail?: string } } };
-      setError(apiErr.response?.data?.detail || 'Failed to register');
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        const detail = err.response?.data?.detail;
+        if (!err.response) {
+          setError('Cannot reach the server. Please check your connection.');
+        } else if (status === 409) {
+          setError('Username already taken. Please choose a different one.');
+        } else if (status === 400) {
+          setError(detail || 'Invalid input. Please check your details.');
+        } else if (status === 500) {
+          setError('Server error. Please try again later.');
+        } else {
+          setError(detail || 'Registration failed. Please try again.');
+        }
+      } else {
+        setError('An unexpected error occurred.');
+      }
     } finally {
       setLoading(false);
     }

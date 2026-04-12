@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 import uuid
 import boto3
 from botocore.client import Config
@@ -110,9 +111,9 @@ async def upload_asset(
     db.commit()
     db.refresh(new_asset)
     
-    # Decentralized Task Trigger: Send to Redis directly without importing the heavy worker
+    # Trigger scan (scan decides whether to auto-process or wait for user)
     if asset_type == AssetType.MODEL:
-        celery_app.send_task("worker.process_asset", args=[str(asset_id)])
+        celery_app.send_task("worker.scan_asset", args=[str(asset_id)])
     
     return {"id": str(new_asset.id), "status": new_asset.status, "type": new_asset.asset_type}
 
@@ -139,6 +140,61 @@ def list_assets(
                 print(f"Error generating url for {asset.id}: {e}")
                 
     return assets
+
+
+class ConfirmSelectionRequest(BaseModel):
+    selections: List[str]  # List of object names chosen by the user
+    is_sliceable: bool = False
+
+
+@router.post("/{asset_id}/confirm-selection")
+def confirm_selection(
+    asset_id: str,
+    body: ConfirmSelectionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """User has confirmed which objects to import from a multi-object file.
+    Creates one Asset record per selected object and starts processing.
+    """
+    parent = db.query(Asset).filter(
+        Asset.id == asset_id,
+        Asset.owner_id == current_user.id
+    ).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if parent.status != AssetStatus.PENDING_SELECTION:
+        raise HTTPException(status_code=400,
+                            detail="Asset is not awaiting object selection")
+
+    if not body.selections:
+        raise HTTPException(status_code=400, detail="No objects selected")
+
+    created_ids = []
+    for obj_name in body.selections:
+        child_id = uuid.uuid4()
+        child_asset = Asset(
+            id=child_id,
+            owner_id=current_user.id,
+            filename=obj_name,          # Real in-file object name
+            asset_type=parent.asset_type,
+            is_sliceable=body.is_sliceable,
+            original_path=parent.original_path,   # Same raw file
+            processed_path=None,
+            status=AssetStatus.PENDING
+        )
+        db.add(child_asset)
+        db.flush()  # Get the ID before commit
+        celery_app.send_task("worker.process_asset",
+                             args=[str(child_id), obj_name])
+        created_ids.append(str(child_id))
+
+    # Delete the placeholder parent asset
+    # (raw file in S3 is kept via original_path references in children)
+    db.delete(parent)
+    db.commit()
+
+    return {"created": created_ids}
 
 @router.get("/{asset_id}", response_model=AssetResponse)
 def get_asset(asset_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
