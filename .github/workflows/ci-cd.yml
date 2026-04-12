@@ -1,0 +1,138 @@
+name: CI/CD Build and Extensive Tests
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-build:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: /home/runner/work/graduation-project/graduation-project/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: /home/runner/work/graduation-project/graduation-project/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  backend-unit-tests:
+    name: Backend unit tests (${{ matrix.service }}, py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        include:
+          - service: service-auth
+            requirements: microservices/service-auth/requirements.txt
+            test_file: tests/test_auth.py
+          - service: service-assets
+            requirements: microservices/service-assets/requirements.txt
+            test_file: tests/test_assets.py
+          - service: service-rooms
+            requirements: microservices/service-rooms/requirements.txt
+            test_file: tests/test_rooms.py
+    defaults:
+      run:
+        working-directory: /home/runner/work/graduation-project/graduation-project/microservices/${{ matrix.service }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest httpx
+          python -m pip install -r /home/runner/work/graduation-project/graduation-project/${{ matrix.requirements }}
+
+      - name: Run tests
+        env:
+          PYTHONPATH: /home/runner/work/graduation-project/graduation-project/microservices
+        run: pytest -q ${{ matrix.test_file }}
+
+  pipeline-e2e:
+    name: End-to-end 3D pipeline tests (Docker + test models)
+    runs-on: ubuntu-latest
+    needs:
+      - frontend-build
+      - backend-unit-tests
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: /home/runner/work/graduation-project/graduation-project
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare environment file
+        run: |
+          cp /home/runner/work/graduation-project/graduation-project/.env.example /home/runner/work/graduation-project/graduation-project/.env
+          echo "SECRET_KEY=ci_secret_key_for_testing_only" >> /home/runner/work/graduation-project/graduation-project/.env
+
+      - name: Start stack
+        run: docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml up -d --build
+
+      - name: Wait for API gateway
+        run: |
+          for i in {1..90}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8000/auth/login" -H "Content-Type: application/json" -d '{"username":"healthcheck","password":"healthcheck","role":"STUDENT"}' || true)
+            if [ "$code" = "401" ] || [ "$code" = "422" ]; then
+              echo "API is ready (status $code)."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become ready in time."
+          exit 1
+
+      - name: Run strict E2E test suite
+        env:
+          API_URL: http://localhost:8000
+          E2E_TEST_MODELS: Duck.glb,DamagedHelmet.glb
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+          python /home/runner/work/graduation-project/graduation-project/test_scripts/conclusive_e2e_test.py
+
+      - name: Capture container logs on failure
+        if: failure()
+        run: docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml logs --no-color > /home/runner/work/graduation-project/graduation-project/docker-compose-logs.txt
+
+      - name: Upload logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-logs
+          path: /home/runner/work/graduation-project/graduation-project/docker-compose-logs.txt
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f /home/runner/work/graduation-project/graduation-project/docker-compose.yml down -v
