@@ -13,7 +13,8 @@ from rooms import router as room_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure Tables exist (They should from auth service, but good practice)
-    Base.metadata.create_all(bind=engine)
+    # Ensure Tables exist (Delegated to Auth Service)
+    pass
     yield
 
 app = FastAPI(title="Cortex AI - Rooms Service", lifespan=lifespan)

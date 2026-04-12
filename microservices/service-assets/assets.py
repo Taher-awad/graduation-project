@@ -53,9 +53,9 @@ async def upload_asset(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # RBAC: Only Staff can upload
-    if current_user.role != UserRole.STAFF:
-        raise HTTPException(status_code=403, detail="Only Staff members can upload assets.")
+    # RBAC: Only Teachers and TAs can upload
+    if current_user.role not in [UserRole.TEACHER, UserRole.TA]:
+        raise HTTPException(status_code=403, detail="Only Teachers and TAs can upload assets.")
 
     asset_id = uuid.uuid4()
     file_ext = file.filename.split('.')[-1].lower()

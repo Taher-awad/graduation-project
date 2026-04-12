@@ -45,7 +45,7 @@ export const AssetCard = ({ asset, onView, onDelete }: AssetCardProps) => {
          await api.delete(`/assets/${asset.id}`);
          onDelete();
       }
-    } catch (e) {
+    } catch {
       alert('Failed to delete asset');
     }
   };

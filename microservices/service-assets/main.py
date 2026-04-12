@@ -12,8 +12,9 @@ from assets import router as asset_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure Tables exist
-    Base.metadata.create_all(bind=engine)
+    # 1. Create Tables
+    # Ensure Tables exist (Delegated to Auth Service)
+    pass
     yield
 
 app = FastAPI(title="Cortex AI - Assets Service", lifespan=lifespan)

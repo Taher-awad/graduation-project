@@ -11,10 +11,11 @@ import {
   Moon,
   ChevronRight
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const SidebarItem = ({ icon: Icon, label, path, active }: any) => (
+const SidebarItem = ({ icon: Icon, label, path, active }: { icon: LucideIcon; label: string; path: string; active?: boolean }) => (
   <Link
     to={path}
     className={clsx(

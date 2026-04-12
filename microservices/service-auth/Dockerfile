@@ -19,4 +19,4 @@ ENV PYTHONPATH=/app
 EXPOSE 8000
 
 # Production Optimization: Run with Gunicorn Uvicorn workers
-CMD ["gunicorn", "main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000"]
+CMD ["gunicorn", "main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000"]

@@ -1,6 +1,7 @@
 export const UserRole = {
-  STAFF: "STAFF",
-  STUDENT: "STUDENT"
+  TEACHER: "TEACHER",
+  TA: "TA",
+  STUDENT: "STUDENT",
 } as const;
 
 export type UserRole = (typeof UserRole)[keyof typeof UserRole];
@@ -35,7 +36,7 @@ export interface Asset {
   status: AssetStatus;
   is_sliceable: boolean;
   download_url?: string;
-  metadata_json?: any;
+  metadata_json?: Record<string, unknown>;
 }
 
 export interface Room {

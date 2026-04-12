@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from shared.database import SessionLocal
 from shared.models import Asset, AssetStatus
 from celery_app import celery_app
-import optimize
+
 from utils_worker import find_main_model_file
 import redis
 
@@ -39,7 +39,7 @@ s3 = boto3.client('s3',
 
 BUCKET_NAME = os.getenv("MINIO_BUCKET", "assets")
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, name="worker.process_asset")
 def process_asset(self, asset_id: str):
     db: Session = SessionLocal()
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
@@ -132,7 +132,7 @@ def process_asset(self, asset_id: str):
         blender_cmd = [
             "blender",
             "-b", # Background
-            "-P", "/app/process_model.py", # Absolute path to ensure it runs from any CWD
+            "-P", "/app/service-3d-worker/process_model.py", # Absolute path to ensure it runs from any CWD
             "--", # Split args
             "--input", target_model_path,
             "--output", mid_glb_path,

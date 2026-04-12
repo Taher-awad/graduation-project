@@ -687,7 +687,6 @@ def export_model(output_path):
         export_materials='EXPORT',
         export_image_format='AUTO',
         export_apply=True, # Apply modifiers
-        export_colors=True, # Default behavior
         export_normals=True,
         export_tangents=True,
         export_texcoords=True

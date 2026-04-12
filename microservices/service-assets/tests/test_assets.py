@@ -43,7 +43,7 @@ Base.metadata.create_all(bind=engine)
 
 # Seed Test Teacher
 db = TestingSessionLocal()
-test_teacher = User(username="test_teacher", password_hash="dummy", role=UserRole.STAFF)
+test_teacher = User(username="test_teacher", password_hash="dummy", role=UserRole.TEACHER)
 db.add(test_teacher)
 db.commit()
 db.refresh(test_teacher)

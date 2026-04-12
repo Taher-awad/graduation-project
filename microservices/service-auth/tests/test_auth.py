@@ -36,7 +36,7 @@ client = TestClient(app)
 def test_register_staff():
     response = client.post(
         "/auth/register",
-        json={"username": "test_teacher", "password": "123", "role": "STAFF"}
+        json={"username": "test_teacher", "password": "123", "role": "TEACHER"}
     )
     assert response.status_code == 201
     assert response.json() == {"message": "User created successfully"}
@@ -59,16 +59,16 @@ def test_register_duplicate_user():
 def test_login_success():
     response = client.post(
         "/auth/login",
-        json={"username": "test_teacher", "password": "123", "role": "STAFF"}
+        json={"username": "test_teacher", "password": "123", "role": "TEACHER"}
     )
     assert response.status_code == 200
     assert "access_token" in response.json()
-    assert response.json()["role"] == "STAFF"
+    assert response.json()["role"] == "TEACHER"
 
 def test_login_failure():
     response = client.post(
         "/auth/login",
-        json={"username": "test_teacher", "password": "wrongpassword", "role": "STAFF"}
+        json={"username": "test_teacher", "password": "wrongpassword", "role": "TEACHER"}
     )
     assert response.status_code == 401
     assert response.json() == {"detail": "Incorrect username or password"}

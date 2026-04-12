@@ -6,7 +6,8 @@ import datetime
 from .database import Base
 
 class UserRole(str, enum.Enum):
-    STAFF = "STAFF"
+    TEACHER = "TEACHER"
+    TA = "TA"
     STUDENT = "STUDENT"
 
 class AssetType(str, enum.Enum):

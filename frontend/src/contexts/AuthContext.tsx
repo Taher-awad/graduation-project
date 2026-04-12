@@ -17,15 +17,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [user, setUser] = useState<User | null>(null);
 
+  const login = (newToken: string) => {
+    setToken(newToken);
+  };
+
+  const logout = () => {
+    setToken(null);
+    localStorage.removeItem('token');
+  };
+
   useEffect(() => {
     if (token) {
         try {
             // Simple decode to get user info. 
             // In a real app, you might call /auth/me
-            const decoded: any = jwtDecode(token);
+            const decoded = jwtDecode<{ sub: string; role?: string }>(token);
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setUser({
                 username: decoded.sub,
-                role: decoded.role || UserRole.STUDENT 
+                role: (decoded.role as UserRole) || UserRole.STUDENT 
             });
             localStorage.setItem('token', token);
         } catch (e) {
@@ -38,15 +48,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [token]);
 
-  const login = (newToken: string) => {
-    setToken(newToken);
-  };
-
-  const logout = () => {
-    setToken(null);
-    localStorage.removeItem('token');
-  };
-
   return (
     <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
       {children}
@@ -54,6 +55,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) throw new Error("useAuth must be used within an AuthProvider");

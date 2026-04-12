@@ -12,8 +12,8 @@ router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 @router.post("/", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(room: RoomCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != UserRole.STAFF:
-        raise HTTPException(status_code=403, detail="Only STAFF can create rooms")
+    if current_user.role not in [UserRole.TEACHER, UserRole.TA]:
+        raise HTTPException(status_code=403, detail="Only TEACHER and TA can create rooms")
     
     new_room = Room(
         name=room.name,

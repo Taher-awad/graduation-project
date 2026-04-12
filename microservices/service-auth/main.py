@@ -26,9 +26,10 @@ async def lifespan(app: FastAPI):
         if not user:
             print("Seeding default STAFF: taher")
             hashed_pw = get_password_hash("123")
-            new_user = User(username="taher", password_hash=hashed_pw, role=UserRole.STAFF)
+            new_user = User(username="taher", password_hash=hashed_pw, role=UserRole.TEACHER)
             db.add(new_user)
             db.commit()
+            print("Seeded taher as TEACHER successfully")
             
         # Student User
         student = db.query(User).filter(User.username == "student1").first()

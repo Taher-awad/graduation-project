@@ -22,8 +22,9 @@ export const Register = () => {
     try {
       await api.post('/auth/register', { username, password, role });
       navigate('/login');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to register');
+    } catch (err) {
+      const apiErr = err as { response?: { data?: { detail?: string } } };
+      setError(apiErr.response?.data?.detail || 'Failed to register');
     } finally {
       setLoading(false);
     }
@@ -71,7 +72,7 @@ export const Register = () => {
             <form onSubmit={handleSubmit} className="space-y-6">
             <div>
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">I am a...</label>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-2">
                 <div 
                     onClick={() => setRole(UserRole.STUDENT)}
                     className={clsx(
@@ -85,16 +86,28 @@ export const Register = () => {
                     <span className="font-medium text-sm">Student</span>
                 </div>
                 <div 
-                    onClick={() => setRole(UserRole.STAFF)}
+                    onClick={() => setRole(UserRole.TA)}
                     className={clsx(
                     "cursor-pointer p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2",
-                    role === UserRole.STAFF 
+                    role === UserRole.TA 
+                        ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" 
+                        : "border-slate-200 dark:border-slate-800 hover:border-emerald-200 dark:hover:border-slate-700 text-slate-500 dark:text-slate-400"
+                    )}
+                >
+                    <ShieldCheck size={24} />
+                    <span className="font-medium text-sm">TA</span>
+                </div>
+                <div 
+                    onClick={() => setRole(UserRole.TEACHER)}
+                    className={clsx(
+                    "cursor-pointer p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2",
+                    role === UserRole.TEACHER 
                         ? "border-purple-500 bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400" 
                         : "border-slate-200 dark:border-slate-800 hover:border-purple-200 dark:hover:border-slate-700 text-slate-500 dark:text-slate-400"
                     )}
                 >
                     <ShieldCheck size={24} />
-                    <span className="font-medium text-sm">Staff</span>
+                    <span className="font-medium text-sm">Teacher</span>
                 </div>
                 </div>
             </div>

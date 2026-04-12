@@ -33,7 +33,7 @@ export const Rooms = () => {
   const [loading, setLoading] = useState(true);
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const isStaff = user.role === 'STAFF';
+  const canManageRooms = user.role === 'TEACHER' || user.role === 'TA';
 
   const fetchData = async () => {
     try {
@@ -44,7 +44,7 @@ export const Rooms = () => {
       ]);
       setRooms(roomsData);
       setInvitations(invitesData);
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
@@ -62,7 +62,7 @@ export const Rooms = () => {
       setIsCreateModalOpen(false);
       setNewRoomName('');
       fetchData();
-    } catch (err: any) {
+    } catch {
       alert('Failed to create room');
     }
   };
@@ -72,7 +72,7 @@ export const Rooms = () => {
       await joinRoom(roomId);
       fetchData();
       alert('Joined room successfully');
-    } catch (err) {
+    } catch {
       alert('Failed to join room');
     }
   };
@@ -83,7 +83,7 @@ export const Rooms = () => {
       await deleteRoom(roomId);
       setManageRoom(null);
       fetchData();
-    } catch (err) {
+    } catch {
       alert('Failed to delete room');
     }
   };
@@ -96,7 +96,7 @@ export const Rooms = () => {
       if (manageRoom?.id === roomId) {
         setManageRoom(prev => prev ? { ...prev, is_online: !currentStatus } : null);
       }
-    } catch (err) {
+    } catch {
       alert('Failed to update status');
     }
   };
@@ -108,8 +108,9 @@ export const Rooms = () => {
       await inviteUser(manageRoom.id, inviteUsername);
       setInviteUsername('');
       alert(`Invitation sent to ${inviteUsername}`);
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to invite user');
+    } catch (err) {
+      const apiErr = err as { response?: { data?: { detail?: string } } };
+      alert(apiErr.response?.data?.detail || 'Failed to invite user');
     }
   };
 
@@ -126,7 +127,7 @@ export const Rooms = () => {
           <p className="text-slate-400 mt-2">Join a session or create your own</p>
         </div>
         
-        {isStaff && (
+        {canManageRooms && (
           <button 
             onClick={() => setIsCreateModalOpen(true)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-colors shadow-lg shadow-blue-500/20"
@@ -185,7 +186,7 @@ export const Rooms = () => {
             
             <div className="flex items-center gap-2 mt-4 pt-4 border-t border-slate-700/50">
                {/* Owner Actions */}
-               {(room as any).role_in_room === 'OWNER' && (
+               {room.role_in_room === 'OWNER' && (
                   <button 
                     onClick={() => setManageRoom(room)}
                     className="p-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
@@ -204,7 +205,7 @@ export const Rooms = () => {
 
         {rooms.length === 0 && (
             <div className="col-span-full text-center py-12 text-slate-500">
-                No rooms found. {isStaff ? 'Create one to get started!' : 'Wait for an invitation.'}
+                No rooms found. {canManageRooms ? 'Create one to get started!' : 'Wait for an invitation.'}
             </div>
         )}
       </div>

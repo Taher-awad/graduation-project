@@ -22,8 +22,9 @@ export const Login = () => {
       const response = await api.post('/auth/login', { username, password });
       login(response.data.access_token);
       navigate('/');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to login');
+    } catch (err) {
+      const apiErr = err as { response?: { data?: { detail?: string } } };
+      setError(apiErr.response?.data?.detail || 'Failed to login');
     } finally {
       setLoading(false);
     }

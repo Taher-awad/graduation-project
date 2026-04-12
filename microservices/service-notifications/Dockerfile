@@ -2,10 +2,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY service-notifications/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy shared models and configuration
+COPY shared /app/shared
+
+# Copy the specific microservice
+COPY service-notifications /app/service-notifications
+
+WORKDIR /app/service-notifications
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
