@@ -40,3 +40,8 @@ export const updateRoomStatus = async (roomId: string, is_online: boolean): Prom
   const response = await api.put(`/rooms/${roomId}/status?is_online=${is_online}`);
   return response.data;
 };
+
+export const getAvailableUsers = async (): Promise<any[]> => {
+  const response = await api.get('/rooms/users/available');
+  return response.data;
+};

@@ -1,0 +1,118 @@
+classDiagram
+    %% --- Data Entities (SQLAlchemy) ---
+    class User {
+        +UUID id
+        +String username
+        +String password_hash
+        +UserRole role
+    }
+
+    class Asset {
+        +UUID id
+        +String filename
+        +AssetType asset_type
+        +Boolean is_sliceable
+        +AssetStatus status
+        +String original_path
+        +String processed_path
+        +JSON metadata_json
+    }
+
+    class Room {
+        +UUID id
+        +String name
+        +Boolean is_online
+        +Integer max_participants
+    }
+
+    class RoomMember {
+        +UUID room_id
+        +UUID user_id
+        +RoomMemberStatus status
+        +JSON permissions
+    }
+
+    %% Entity Relationships
+    User "1" --> "*" Asset : owns
+    User "1" --> "*" Room : owns
+    User "1" --> "*" RoomMember : memberships
+    Room "1" --> "*" RoomMember : members
+
+    %% --- Data Transfer Objects (Pydantic) ---
+    namespace DTOs {
+        class UserCreate {
+            +String username
+            +String password
+            +UserRole role
+        }
+        class Token {
+            +String access_token
+            +String token_type
+            +UserRole role
+        }
+        class AssetResponse {
+            +UUID id
+            +String filename
+            +String download_url
+            +AssetStatus status
+        }
+        class RoomCreate {
+            +String name
+            +String description
+            +Boolean is_online
+        }
+        class InviteCreate {
+            +String username
+            +JSON permissions
+        }
+    }
+
+    %% --- Business Logic & Controllers ---
+    namespace Controllers {
+        class AuthController {
+            <<Router>>
+            +register(UserCreate)
+            +login(UserCreate) -> Token
+        }
+        class AssetController {
+            <<Router>>
+            +upload_asset(File) -> Asset
+            +list_assets() -> List[AssetResponse]
+            +get_asset(id) -> AssetResponse
+        }
+        class RoomController {
+            <<Router>>
+            +create_room(RoomCreate) -> Room
+            +invite_user(InviteCreate)
+            +join_room(id)
+        }
+    }
+
+    namespace Workers {
+        class AssetWorker {
+            <<Celery Task>>
+            +process_asset(id)
+        }
+        class ModelProcessor {
+            <<Blender Script>>
+            +validate()
+            +normalize()
+            +export()
+        }
+    }
+
+    %% Logic Connections
+    AuthController ..> UserCreate : Consumes
+    AuthController ..> Token : Returns
+    AuthController ..> User : CRUD
+
+    AssetController ..> AssetResponse : Returns
+    AssetController ..> Asset : CRUD
+    AssetController ..> AssetWorker : Triggers
+
+    RoomController ..> RoomCreate : Consumes
+    RoomController ..> InviteCreate : Consumes
+    RoomController ..> Room : CRUD
+
+    AssetWorker ..> ModelProcessor : Invokes
+    AssetWorker ..> Asset : Updates

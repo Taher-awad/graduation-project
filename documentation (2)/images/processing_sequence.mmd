@@ -1,0 +1,43 @@
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant API as Backend API
+    participant DB as Postgres DB
+    participant S3 as MinIO (S3)
+    participant Q as Redis Queue
+    participant W as Celery Worker
+    participant B as Blender (Headless)
+
+    Note over U, API: 1. Asset Upload
+    U->>API: POST /assets/upload (File)
+    API->>S3: Upload Raw File (stream)
+    S3-->>API: Success (S3 Key)
+    API->>DB: Create Asset (Status: PENDING)
+    API->>Q: Enqueue Task (process_asset)
+    API-->>U: Return Asset ID (PENDING)
+
+    Note over W: 2. Async Processing
+    W->>Q: Pop Task
+    W->>DB: Update Status: PROCESSING
+    W->>S3: Download Raw File
+    
+    W->>W: Extract Zip (if needed) & Detect Main File
+    
+    W->>B: Execute process_model.py
+    activate B
+    B->>B: Validate Geometry
+    B->>B: Fix Textures & Materials
+    B->>B: Normalize (Scale/Center)
+    B->>B: Export to GLB
+    B-->>W: Return Success/Error
+    deactivate B
+
+    W->>S3: Upload Processed GLB
+    W->>DB: Update Status: COMPLETED
+    W->>DB: Save Metadata (Polycount, etc)
+
+    Note over U, S3: 3. View Result
+    U->>API: GET /assets/{id}
+    API->>S3: Generate Presigned URL
+    API-->>U: Return URL
+    U->>S3: Download GLB

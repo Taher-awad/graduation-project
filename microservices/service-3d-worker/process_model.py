@@ -28,13 +28,13 @@ def normalize_model(is_sliceable, asset_id):
     view_layer = bpy.context.view_layer
     
     # Process only mesh objects
-    mesh_objects = [obj for obj in bpy.context.view_layer.objects if obj.type == 'MESH']
+    mesh_objects = [obj for obj in bpy.context.view_layer.objects if getattr(obj, 'type', '') == 'MESH']
     
     print(f"DEBUG: Found {len(mesh_objects)} meshes in active View Layer.")
     
     if not mesh_objects:
         print("DEBUG: View Layer empty! Checking all objects in file...")
-        mesh_objects = [obj for obj in bpy.data.objects if obj.type == 'MESH']
+        mesh_objects = [obj for obj in bpy.data.objects if getattr(obj, 'type', '') == 'MESH']
         print(f"DEBUG: Found {len(mesh_objects)} meshes in bpy.data.objects.")
         
         # Ensure they are linked to the scene so we can process them
@@ -160,7 +160,7 @@ def normalize_model(is_sliceable, asset_id):
     import bmesh
     try:
         for obj in mesh_objects:
-            if obj.type == 'MESH':
+            if getattr(obj, 'type', '') == 'MESH':
                 # Shade smooth all faces
                 mesh = obj.data
                 for poly in mesh.polygons:
@@ -174,6 +174,10 @@ def normalize_model(is_sliceable, asset_id):
                     if len(edge.link_faces) == 2:
                         angle = edge.calc_face_angle(0.0)
                         edge.smooth = angle < threshold
+                
+                # Triangulate mesh prior to export to avoid tangent generation errors
+                bmesh.ops.triangulate(bm, faces=bm.faces[:])
+                
                 bm.to_mesh(mesh)
                 bm.free()
                 mesh.update()
@@ -416,7 +420,7 @@ def auto_connect_textures():
         # We check which objects use this material and add their names to the tokens.
         
         # This is slightly expensive, but worth it for generic assets.
-        users = [obj for obj in bpy.data.objects if obj.type == 'MESH' and mat.name in [m.name for m in obj.data.materials if m]]
+        users = [obj for obj in bpy.data.objects if getattr(obj, 'type', '') == 'MESH' and mat.name in [m.name for m in obj.data.materials if m]]
         
         for obj in users:
             obj_name_clean = obj.name.lower()
@@ -611,7 +615,7 @@ def validate_model(is_sliceable):
         print("--- DEBUG: CHECKING MANIFOLD EDGES ---")
         non_manifold_count = 0
         for obj in bpy.data.objects:
-            if obj.type == 'MESH':
+            if getattr(obj, 'type', '') == 'MESH':
                 bm = bmesh.new()
                 bm.from_mesh(obj.data)
                 for e in bm.edges:
@@ -640,7 +644,7 @@ def validate_model(is_sliceable):
     start_checking = True
     
     for obj in bpy.data.objects:
-        if obj.type == 'MESH':
+        if getattr(obj, 'type', '') == 'MESH':
             mesh = obj.data
             total_verts += len(mesh.vertices)
             
@@ -720,7 +724,7 @@ def is_skybox_object(obj, all_objects):
         score += 1
 
     # Shader check — only Emission / Background / World shaders → not a real model
-    if obj.type == 'MESH' and obj.data.materials:
+    if getattr(obj, 'type', '') == 'MESH' and obj.data.materials:
         emission_only = True
         for mat in obj.data.materials:
             if mat and mat.use_nodes:
@@ -734,7 +738,7 @@ def is_skybox_object(obj, all_objects):
             score += 1
 
     # Size check — if this object's volume is > 80% of the whole scene
-    if obj.type == 'MESH' and hasattr(obj, 'bound_box') and obj.bound_box:
+    if getattr(obj, 'type', '') == 'MESH' and hasattr(obj, 'bound_box') and obj.bound_box:
         import mathutils
         def obj_volume(o):
             mw = o.matrix_world
@@ -745,12 +749,12 @@ def is_skybox_object(obj, all_objects):
             return max((max(xs)-min(xs)) * (max(ys)-min(ys)) * (max(zs)-min(zs)), 0.0001)
 
         own_vol = obj_volume(obj)
-        all_vol = sum(obj_volume(o) for o in all_objects if o.type == 'MESH')
+        all_vol = sum(obj_volume(o) for o in all_objects if getattr(o, 'type', '') == 'MESH')
         if all_vol > 0 and own_vol / all_vol > 0.80:
             score += 1
 
     # No UV maps and single material → often a skybox sphere
-    if obj.type == 'MESH':
+    if getattr(obj, 'type', '') == 'MESH':
         if len(obj.data.uv_layers) == 0 and len(obj.data.materials) <= 1:
             score += 1
 
@@ -768,7 +772,7 @@ def scan_scene(filepath):
     reset_scene()
     import_model(filepath)
 
-    all_mesh_objects = [o for o in bpy.data.objects if o.type == 'MESH']
+    all_mesh_objects = [o for o in bpy.data.objects if getattr(o, 'type', '') == 'MESH']
 
     # Remove skyboxes
     removed = []
@@ -782,7 +786,7 @@ def scan_scene(filepath):
 
     # Collect surviving root objects (no parent, or parent is not a MESH)
     survivors = [o for o in bpy.data.objects
-                 if o.type == 'MESH' and (o.parent is None or o.parent.type != 'MESH')]
+                 if getattr(o, 'type', '') == 'MESH' and (o.parent is None or getattr(o.parent, 'type', '') != 'MESH')]
 
     # Also include armature roots (animated characters)
     armature_roots = [o for o in bpy.data.objects
@@ -790,7 +794,7 @@ def scan_scene(filepath):
 
     result = []
     for obj in survivors:
-        verts = len(obj.data.vertices) if obj.type == 'MESH' else 0
+        verts = len(obj.data.vertices) if getattr(obj, 'type', '') == 'MESH' else 0
         result.append({
             "name": obj.name,
             "type": obj.type,
@@ -847,7 +851,7 @@ if __name__ == "__main__":
         import_model(parsed_args.input)
 
         # Auto-remove skybox objects before any processing
-        all_mesh_objects = [o for o in bpy.data.objects if o.type == 'MESH']
+        all_mesh_objects = [o for o in bpy.data.objects if getattr(o, 'type', '') == 'MESH']
         for obj in list(all_mesh_objects):
             if is_skybox_object(obj, all_mesh_objects):
                 print(f"Auto-removing skybox object: {obj.name}", flush=True)

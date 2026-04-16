@@ -5,15 +5,15 @@ import uuid
 
 from shared.database import get_db
 from shared.models import Room, RoomMember, User, UserRole, RoomMemberStatus
-from shared.schemas import RoomCreate, RoomResponse, InviteCreate, InvitationResponse
+from shared.schemas import RoomCreate, RoomResponse, InviteCreate, InvitationResponse, UserResponse
 from shared.dependencies import get_current_user
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 @router.post("/", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(room: RoomCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role not in [UserRole.TEACHER, UserRole.TA]:
-        raise HTTPException(status_code=403, detail="Only TEACHER and TA can create rooms")
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only TEACHER can create rooms")
     
     new_room = Room(
         name=room.name,
@@ -181,3 +181,8 @@ def delete_room(
     db.delete(room)
     db.commit()
     return None
+
+@router.get("/users/available", response_model=List[UserResponse])
+def get_available_users(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    users = db.query(User).filter(User.id != current_user.id).all()
+    return users

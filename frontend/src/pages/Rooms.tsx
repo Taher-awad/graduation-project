@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   Users, 
   Plus, 
@@ -15,13 +16,15 @@ import {
   joinRoom, 
   deleteRoom, 
   updateRoomStatus, 
-  inviteUser 
+  inviteUser,
+  getAvailableUsers
 } from '../api/rooms';
 import type { Room, Invitation } from '../types';
 
 export const Rooms = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -32,18 +35,20 @@ export const Rooms = () => {
   const [inviteUsername, setInviteUsername] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const canManageRooms = user.role === 'TEACHER' || user.role === 'TA';
+  const { user } = useAuth();
+  const canManageRooms = user?.role === 'TEACHER';
 
   const fetchData = async () => {
     try {
       // setLoading(true); // Don't flicker loading on every refresh
-      const [roomsData, invitesData] = await Promise.all([
+      const [roomsData, invitesData, usersData] = await Promise.all([
         getRooms(),
-        getInvitations()
+        getInvitations(),
+        getAvailableUsers()
       ]);
       setRooms(roomsData);
       setInvitations(invitesData);
+      setAvailableUsers(usersData);
     } catch (err) {
       console.error(err);
     } finally {
@@ -280,14 +285,17 @@ export const Rooms = () => {
                               <UserPlus size={18} /> Invite User
                            </h3>
                            <form onSubmit={handleInviteUser} className="flex gap-2">
-                              <input 
-                                  type="text"
-                                  placeholder="Enter username..."
+                              <select 
                                   value={inviteUsername}
                                   onChange={e => setInviteUsername(e.target.value)}
                                   className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                                   required
-                              />
+                              >
+                                  <option value="" disabled>Select user to invite...</option>
+                                  {availableUsers.map(u => (
+                                      <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                                  ))}
+                              </select>
                               <button 
                                   type="submit"
                                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
